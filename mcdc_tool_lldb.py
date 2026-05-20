@@ -31,15 +31,15 @@ def init_coverage_data(decision: BoolExpression,
 
 
 def update_coverage_data(decision: BoolExpression,
-                         conditions: list[ExpressionOperand],
-                         decision_result: bool, condition_results: list[bool]):
+                         conditions: list[BoolExpression],
+                         decision_result: bool):
     if not decision.uuid in COVERAGE_DATA:
         init_coverage_data(decision, conditions)
     outcomes = [decision_result, []]
-    for idx, res in enumerate(condition_results):
-        assert conditions[idx].uuid == COVERAGE_DATA[
+    for idx, cond in enumerate(conditions):
+        assert cond.uuid == COVERAGE_DATA[
             decision.uuid]["conditions_order"][idx]
-        outcomes[1].append(res)
+        outcomes[1].append(cond.get_value())
 
     COVERAGE_DATA[decision.uuid]["outcomes"].append(outcomes)
 
@@ -54,7 +54,8 @@ def main():
     expressions = load_mcdc_data()
     for expr in expressions:
         for decision in expr.get_decisions():
-            print(decision, decision.get_leafs())
+            decision.update_relations()
+#            print(decision, decision.get_leafs())
 
     target, process = connect_to_target("localhost:1234")
     print(target, process)
@@ -100,25 +101,34 @@ def on_breakpoint(frame: lldb.SBFrame, bp_loc: lldb.SBBreakpointLocation,
     print("bool expression id is ", expr_idx)
     expr = BOOL_EXPR[expr_idx]
     print(f"expr {expr.to_c()} at {expr.loc}")
-    outcomes = []
     for bool_expr in expr.get_decisions():
-        leafs: list[BoolExpression] = bool_expr.get_leafs()
-        for leaf in leafs:
+        if bool_expr.has_fcall():
+            print("Skipping fcall")
+            return False
+        bool_expr.reset_value()
+
+        descendants = bool_expr.get_all_descendants()
+        while bool_expr.get_value() == None:
+            leaf = bool_expr.get_undecided_child()
+            assert leaf in descendants
             if leaf.has_fcall():
+                return False
                 raise Exception(
                     "Don't know what to do with function calls (yet)")
             val: lldb.SBValue = frame.EvaluateExpression(leaf.to_c())
             print(f"[Condition]Evaluated: {leaf.to_c()} got {val}")
-            outcomes.append(sbval_to_bool(val))
+            bool_val = sbval_to_bool(val)
+            leaf.set_value(bool_val)
 
         if bool_expr.has_fcall():
+            return False
             raise Exception(
                 "Don't know what to do with function calls on expression level (yet)"
             )
         print(bool_expr)
         val: lldb.SBValue = frame.EvaluateExpression(bool_expr.to_c())
         print(f"[Decision]Evaluated: {bool_expr.to_c()} got {val}")
-        update_coverage_data(bool_expr, leafs, sbval_to_bool(val), outcomes)
+        update_coverage_data(bool_expr, descendants, sbval_to_bool(val))
     return False
 
 
@@ -156,6 +166,9 @@ if __name__ == "__main__":
 def run_within_lldb():
     load_coverage_data()
     bool_expr = load_mcdc_data()
+    for expr in bool_expr:
+        for decision in expr.get_decisions():
+            decision.update_relations()
     global BOOL_EXPR
     BOOL_EXPR = bool_expr
     process_mcdc_in_debugger(lldb.debugger, bool_expr)
