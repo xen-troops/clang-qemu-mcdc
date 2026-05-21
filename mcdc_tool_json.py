@@ -266,7 +266,7 @@ def deep_dive(ast: ASTEntry) -> list[ExpressionOperand]:
 class ExpressionOperand:
     OPR_VAR = 1
     OPR_FCALL = 2
-    OPR_EXPR = 3
+    OPR_BOOL_EXPR = 3
     OPR_NON_BOOL_EXPR = 4
     OPR_LITERAL = 5
     OPR_COND_OP = 6
@@ -284,7 +284,7 @@ class ExpressionOperand:
                 return self.operand
             case self.OPR_FCALL:
                 return f"{self.operand}"
-            case self.OPR_EXPR:
+            case self.OPR_BOOL_EXPR:
                 return str(self.operand)
             case self.OPR_NON_BOOL_EXPR:
                 return f"c-expr({self.operand})"
@@ -295,7 +295,7 @@ class ExpressionOperand:
 
     def to_c(self) -> str:
         match self.type:
-            case self.OPR_VAR | self.OPR_LITERAL | self.OPR_EXPR | self.OPR_NON_BOOL_EXPR | self.OPR_FCALL | self.OPR_COND_OP:
+            case self.OPR_VAR | self.OPR_LITERAL | self.OPR_BOOL_EXPR | self.OPR_NON_BOOL_EXPR | self.OPR_FCALL | self.OPR_COND_OP:
                 if isinstance(self.operand, str):
                     return self.operand
                 return self.operand.to_c()
@@ -307,7 +307,7 @@ class ExpressionOperand:
 
     def has_bool_expr(self) -> bool:
         match self.type:
-            case ExpressionOperand.OPR_EXPR | ExpressionOperand.OPR_COND_OP:
+            case ExpressionOperand.OPR_BOOL_EXPR | ExpressionOperand.OPR_COND_OP:
                 return True
             case ExpressionOperand.OPR_LITERAL | ExpressionOperand.OPR_VAR:
                 return False
@@ -322,7 +322,7 @@ class ExpressionOperand:
                 return False
             case ExpressionOperand.OPR_FCALL:
                 return True
-            case  ExpressionOperand.OPR_EXPR | ExpressionOperand.OPR_COND_OP | ExpressionOperand.OPR_NON_BOOL_EXPR:
+            case  ExpressionOperand.OPR_BOOL_EXPR | ExpressionOperand.OPR_COND_OP | ExpressionOperand.OPR_NON_BOOL_EXPR:
                 return self.operand.has_fcall()
             case _:
                 raise Exception(f"Unknown operand type: {self.type}")
@@ -330,7 +330,7 @@ class ExpressionOperand:
     def get_leafs(self) -> list[BoolExpression]:
         "Returns list of leaf boolean expressions or `conditions` in MC/DC lingo"
         match self.type:
-            case ExpressionOperand.OPR_EXPR | ExpressionOperand.OPR_COND_OP | ExpressionOperand.OPR_FCALL | ExpressionOperand.OPR_NON_BOOL_EXPR:
+            case ExpressionOperand.OPR_BOOL_EXPR | ExpressionOperand.OPR_COND_OP | ExpressionOperand.OPR_FCALL | ExpressionOperand.OPR_NON_BOOL_EXPR:
                 return self.operand.get_leafs()
             case ExpressionOperand.OPR_LITERAL | ExpressionOperand.OPR_VAR:
                 return []
@@ -340,7 +340,7 @@ class ExpressionOperand:
     def get_decisions(self) -> list[BoolExpression]:
         "Returns list of top-most boolean expressions or `decisions` in MC/DC lingo"
         match self.type:
-            case ExpressionOperand.OPR_EXPR:
+            case ExpressionOperand.OPR_BOOL_EXPR:
                 return [self]
             case ExpressionOperand.OPR_COND_OP | ExpressionOperand.OPR_FCALL | ExpressionOperand.OPR_NON_BOOL_EXPR:
                 return self.operand.get_decisions()
@@ -622,7 +622,7 @@ def handle_expression(ast: ASTEntry) -> ExpressionOperand:
         arg2 = recurse(ast.inner[1])
         if op:
             return ExpressionOperand(
-                ast.get_loc(), ExpressionOperand.OPR_EXPR,
+                ast.get_loc(), ExpressionOperand.OPR_BOOL_EXPR,
                 BoolExpression(ast.get_loc(), arg1, op, arg2))
 
         return ExpressionOperand(
@@ -643,7 +643,7 @@ def handle_expression(ast: ASTEntry) -> ExpressionOperand:
         arg = recurse(children[0])
         if opcode == "!":
             return ExpressionOperand(
-                ast.get_loc(), ExpressionOperand.OPR_EXPR,
+                ast.get_loc(), ExpressionOperand.OPR_BOOL_EXPR,
                 BoolExpression(ast.get_loc(), arg, BoolExpression.OP_NOT))
 
         return ExpressionOperand(ast.get_loc(),

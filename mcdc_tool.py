@@ -110,7 +110,7 @@ def deep_dive(cursor: Cursor):
 class BoolExprOperand:
     OPR_VAR = 1
     OPR_FCALL = 2
-    OPR_EXPR = 3
+    OPR_BOOL_EXPR = 3
     OPR_NON_BOOL_EXPR = 4
 
     def __init__(self, opr_type, operand: Union[str, BoolExpression]):
@@ -123,7 +123,7 @@ class BoolExprOperand:
                 return self.operand
             case self.OPR_FCALL:
                 return f"{self.operand}()"
-            case self.OPR_EXPR:
+            case self.OPR_BOOL_EXPR:
                 return str(self.operand)
             case self.OPR_NON_BOOL_EXPR:
                 return f"c-expr({self.operand})"
@@ -214,7 +214,7 @@ def handle_expression(cursor: Cursor):
             else:
                 arg1 = recurse(children[0])
                 arg2 = recurse(children[1])
-            return BoolExprOperand(BoolExprOperand.OPR_EXPR,
+            return BoolExprOperand(BoolExprOperand.OPR_BOOL_EXPR,
                                    BoolExpression(arg1, op, arg2))
 
         return BoolExprOperand(BoolExprOperand.OPR_NON_BOOL_EXPR, "TBD")
@@ -239,7 +239,7 @@ def handle_expression(cursor: Cursor):
             raise Exception("Found more than one child in unary expression")
         arg = recurse(children[0])
         if tokens[0].spelling == "!":
-            return BoolExprOperand(BoolExprOperand.OPR_EXPR,
+            return BoolExprOperand(BoolExprOperand.OPR_BOOL_EXPR,
                                    BoolExpression(arg, BoolExpression.OP_NOT))
 
         return BoolExprOperand(BoolExprOperand.OPR_NON_BOOL_EXPR, "TBD")

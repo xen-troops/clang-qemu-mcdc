@@ -7,7 +7,8 @@ from elftools.dwarf.lineprogram import LineProgram, LineState
 from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.die import DIE
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
-from mcdc_tool_parser import BoolExpression, ExpressionOperand, CodeLoc, ArraySubscript, CCast
+from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ConditionalOp, ArraySubscript
 import pickle
 import sys
 from typing import Optional
@@ -60,7 +61,7 @@ def find_dw_loc_end(dwarf_locs: list[DwarfLoc],
 
 def get_addr_range_for_expr(dwarf_locs: list[DwarfLoc],
                             expr: BoolExpression) -> (int, int):
-    code_range = expr.loc_range
+    code_range = expr.ast.range
     if not code_range:
         raise Exception(f"No code range for {expr}: {expr.loc}")
     dw_loc = find_dw_loc(dwarf_locs, code_range.begin)
@@ -149,7 +150,7 @@ def process_cus(dwarfinfo: DWARFInfo) -> list[DWVariable]:
     return ret
 
 
-def process_elf(fname: str, expressions: list[ExpressionOperand]):
+def process_elf(fname: str, expressions: list[SAST]):
     f = open(fname, "rb")
     elffile = ELFFile(f)
     if not elffile.has_dwarf_info():
@@ -363,26 +364,11 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
     ret: list[TracePoint] = []
 
     @fuzzy_matcher
-    def handle_c_expr(operand, state: MatchState):
+    def handle_operand(operand: SAST, state: MatchState):
         match operand:
-            case ArraySubscript():
-                new_state = handle_operand(operand.array, state)
-                return MatchState(new_state.instr_idx + 1,
-                                  new_state.target_reg, True)
-            case CCast():
-                new_state = handle_operand(operand.inner, state)
-                return MatchState(new_state.instr_idx + 1,
-                                  new_state.target_reg, False)
-            case _:
-                raise Exception(f"Unknown c-expr operand type {type(operand)}")
-
-    @fuzzy_matcher
-    def handle_operand(operand: ExpressionOperand, state: MatchState):
-        assert (type(operand) == ExpressionOperand)
-        match operand.type:
-            case ExpressionOperand.OPR_VAR:
-                print(f"Handling variable '{operand.operand}'")
-                v = find_variable(variables, operand.operand, operand.loc.file,
+            case BoolVar() | NonBoolVar():
+                print(f"Handling variable '{operand}'")
+                v = find_variable(variables, operand.name, operand.loc.file,
                                   operand.loc.line)
                 if v.loc_expr.op_name == "DW_OP_fbreg":
                     target_reg = "fp"
@@ -394,19 +380,24 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                 print(f"  Found read at 0x{instr.address:x}")
                 return MatchState(state.instr_idx + 1,
                                   instr.reg_name(instr.operands[0].reg))
-            case ExpressionOperand.OPR_INT_CONST:
+            case IntLiteral():
                 print(
-                    f"Handling int const '{operand.operand}' for reg {state.target_reg}"
+                    f"Handling int const '{operand.value}' for reg {state.target_reg}"
                 )
                 match_sub_instr(instructions[state.instr_idx],
-                                state.target_reg, operand.operand)
+                                state.target_reg, operand.value)
                 return MatchState(state.instr_idx + 1, state.target_reg)
-            case ExpressionOperand.OPR_EXPR:
+            case BoolExpression():
                 print("Handling bool expr")
-                return recurse(operand.operand, state)
-            case ExpressionOperand.OPR_NON_BOOL_EXPR:
-                print("Handling non-bool expr")
-                return handle_c_expr(operand.operand, state)
+                return recurse(operand, state)
+            case ArraySubscript():
+                new_state = handle_operand(operand.array, state)
+                return MatchState(new_state.instr_idx + 1,
+                                  new_state.target_reg, True)
+            case CCast():
+                new_state = handle_operand(operand.casted, state)
+                return MatchState(new_state.instr_idx + 1,
+                                  new_state.target_reg, False)
             case _:
                 raise Exception(
                     f"Don't know what to do with operand {operand}")
@@ -414,9 +405,9 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
     @fuzzy_matcher
     def recurse(e: BoolExpression, state: MatchState) -> MatchState:
         print(f"Recurse, handling {e} at {e.loc}")
-        assert (type(e) == BoolExpression)
+        assert isinstance(e, BoolExpression)
         match e.op:
-            case BoolExpression.OP_EQ:
+            case BoolExpression.OP_EQ | BoolExpression.OP_XOR:
                 print(f"EQ: op1: {e.a} op2: {e.b}")
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
@@ -458,7 +449,7 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                                    "'ZERO FLAG (TODO)'", e.a))
                     new_state.instr_idx += 2
                 new_state = handle_operand(e.b, new_state)
-                if e.b.type == ExpressionOperand.OPR_VAR:
+                if isinstance(e.b, BoolVar):
                     if instructions[new_state.instr_idx].mnemonic == "tbz":
                         match_branch_isntr(instructions[new_state.instr_idx + 1],
                                            "b")
@@ -493,7 +484,7 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                     new_state.instr_idx += 2
 
                 new_state = handle_operand(e.b, new_state)
-                if e.b.type == ExpressionOperand.OPR_VAR:
+                if isinstance(e.b, BoolVar):
                     if instructions[new_state.instr_idx].mnemonic == "tbz":
                         match_branch_isntr(instructions[new_state.instr_idx + 1],
                                            "b")
@@ -561,9 +552,9 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
 #        locations.
 
 
-def load_mcdc_data() -> list[ExpressionOperand]:
+def load_mcdc_data() -> list[SAST]:
     with open("mcdc.pickle", "rb") as f:
-        expressions: ExpressionOperand = pickle.load(f)
+        expressions: SAST = pickle.load(f)
         return expressions
 
 
