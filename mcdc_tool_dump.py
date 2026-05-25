@@ -1,11 +1,11 @@
-from mcdc_tool_parser import ExpressionOperand, ASTEntry
+from mcdc_tool_parser import SAST, ASTEntry
 from pprint import pprint
 import pickle
 import json
 
-def load_mcdc_data() -> list[ExpressionOperand]:
+def load_mcdc_data() -> list[SAST]:
     with open("mcdc.pickle", "rb") as f:
-        expressions: ExpressionOperand = pickle.load(f)
+        expressions: SAST = pickle.load(f)
         return expressions
 
 def main():
@@ -15,7 +15,9 @@ def main():
     #     pprint(expr)
     #     pprint(expr.ast.data)
     print(f"Total number of entries: {len(data)}")
-    recurse_dump(0, data[3260].ast)
+    for expr in data:
+        print(expr, expr.has_fcall())
+    #recurse_dump(0, data[3260].ast)
 
 def recurse_dump(shift: int, ast: ASTEntry):
     tmp = ast.data.copy()
