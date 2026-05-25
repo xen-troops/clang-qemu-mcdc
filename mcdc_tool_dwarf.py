@@ -15,15 +15,22 @@ from typing import Optional
 from pprint import pprint
 import capstone
 
+SUBPROGRAMS: dict[int, DwarfSubProgram] = {}
+
+class DwarfSubProgram:
+    def __init__(self, name: str, die: DIE, addr: int):
+        self.name = name
+        self.die = die
+        self.addr = addr
 
 class DwarfLoc:
 
-    def __init__(self, fname: str, lp_entry: LineState):
+    def __init__(self, fname: str, lp_state: LineState):
         self.fname = fname
-        self.lp_entry = lp_entry
+        self.lp_state = lp_state
 
     def __repr__(self) -> str:
-        return f"<DwarfLoc: {self.fname, self.lp_entry}>"
+        return f"<DwarfLoc: {self.fname, self.lp_state}>"
 
 
 def parse_locs(dwarfinfo) -> list[DwarfLoc]:
@@ -43,7 +50,7 @@ def find_dw_loc(dwarf_locs: list[DwarfLoc],
                 loc: CodeLoc) -> Optional[DwarfLoc]:
 
     for dw_loc in dwarf_locs:
-        if dw_loc.fname == loc.file and dw_loc.lp_entry.line == loc.line:
+        if dw_loc.fname == loc.file and dw_loc.lp_state.line == loc.line:
             return dw_loc
 
     return None
@@ -53,7 +60,7 @@ def find_dw_loc_end(dwarf_locs: list[DwarfLoc],
                     loc: CodeLoc) -> Optional[DwarfLoc]:
 
     for idx, dw_loc in enumerate(reversed(dwarf_locs)):
-        if dw_loc.fname == loc.file and dw_loc.lp_entry.line == loc.line:
+        if dw_loc.fname == loc.file and dw_loc.lp_state.line == loc.line:
             return dwarf_locs[idx + 1]
 
     return None
@@ -71,7 +78,7 @@ def get_addr_range_for_expr(dwarf_locs: list[DwarfLoc],
     if not dw_loc_end:
         raise Exception(
             f"Can't find DWARF END location for {expr}: {expr.loc}")
-    return dw_loc.lp_entry.address, dw_loc_end.lp_entry.address
+    return dw_loc.lp_state.address, dw_loc_end.lp_state.address
   #  return dw_loc_end.lp_entry.address, dw_loc.lp_entry.address
 
 
@@ -108,6 +115,8 @@ class DWVariable:
 def process_function(die: DIE, loc_parser, expr_parser,
                      fnames: list[str]) -> list[DWVariable]:
     ret = []
+
+    SUBPROGRAMS[die.offset] = DwarfSubProgram(die.attributes["DW_AT_name"].value.decode(), die, die.offset)
     for child in die.iter_children():
         child: DIE
         if child.tag in ("DW_TAG_formal_parameter", "DW_TAG_variable"):
@@ -116,7 +125,7 @@ def process_function(die: DIE, loc_parser, expr_parser,
             line = child.attributes["DW_AT_decl_line"].value
             if not "DW_AT_location" in child.attributes:
                 #TODO: Inlined functions
-                pprint(child.attributes)
+#                pprint(child.attributes)
                 continue
             parsed_loc = loc_parser.parse_from_attribute(
                 child.attributes["DW_AT_location"], die.cu["version"], die)
@@ -129,10 +138,18 @@ def process_function(die: DIE, loc_parser, expr_parser,
                 #     print(entity, type(entity))
                 # raise NotImplementedError()
             loc = expr_parser.parse_expr(loc_expr)
-            print(f"{name} at {fname}:{line}", loc)
+#            print(f"{name} at {fname}:{line}", loc)
             ret.append(DWVariable(name, loc[0], fnames[fname], line, die.cu))
+        if child.tag == "DW_TAG_inlined_subroutine":
+            process_inlined_function(child, loc_parser, expr_parser)
     return ret
 
+def process_inlined_function(die: DIE, loc_parser, expr_parser):
+    print(f"Processing inlined function {die.attributes['DW_AT_abstract_origin']}")
+    func = SUBPROGRAMS[die.attributes['DW_AT_abstract_origin'].value]
+    pprint(func.__dict__)
+    print(die)
+    pass
 
 def process_cus(dwarfinfo: DWARFInfo) -> list[DWVariable]:
     location_lists = dwarfinfo.location_lists()
@@ -144,11 +161,25 @@ def process_cus(dwarfinfo: DWARFInfo) -> list[DWVariable]:
         fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
         for die in CU.get_top_DIE().iter_children():
             if die.tag == "DW_TAG_subprogram":
-                print(die)
+#                print(die)
                 ret.extend(
                     process_function(die, loc_parser, expr_parser, fnames))
     return ret
 
+def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
+    fname = dw_loc.fname
+    line = dw_loc.lp_state.line
+    col = dw_loc.lp_state.column
+
+    for expr in expr_list:
+        if expr.loc.file != fname:
+            continue
+        if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
+            continue
+        if col < expr.loc_range.begin.col or col > expr.loc_range.end.col:
+            continue
+        return expr
+    return None
 
 def process_elf(fname: str, expressions: list[SAST]):
     f = open(fname, "rb")
@@ -163,29 +194,73 @@ def process_elf(fname: str, expressions: list[SAST]):
     variables = process_cus(dwarfinfo)
     print(variables)
     ret: list[TracePoint] = []
-    for expr in expressions:
-        for decision in expr.get_decisions():
-            (start, end) = get_addr_range_for_expr(dwarf_locs, decision)
-            if end < start:
-                print(
-                    f"TODO: skipping expr at {decision.loc} because of inverted range: 0x{start:x},0x{end:x}"
-                )
-                continue
-            data = get_code_for_range(elffile, start, end)
+    start_loc: DwarfLoc = None
+    found_expr: SAST = None
+    for loc in dwarf_locs:
+        cur_expr = find_expr_for_loc(loc, expressions)
+        if not cur_expr and not found_expr:
+            continue
+        if not found_expr:
+            found_expr = cur_expr
+            start_loc = loc
+            continue
+        if cur_expr != found_expr:
+            # We have found the whole range for that expr: start_loc - prev_loc
+            start_addr = start_loc.lp_state.address
+            # Probably a hack, but somethimes dwarf data is a bit murky...
+            end_addr = loc.lp_state.address + 16
+            data = get_code_for_range(elffile, start_addr, end_addr)
+            print(f"Found addr range 0x{start_addr:x} 0x{end_addr:x} for {found_expr}")
             if not data:
                 raise Exception(
                     f"Can't get data for range {start:x}, {end:x}, expr: {decision} at {decision.loc}"
                 )
             ret.append(
-                match_bool_expr(decision, list(dis.disasm(data, start)),
+                match_bool_expr(found_expr, list(dis.disasm(data, start_addr)),
                                 variables))
-            # for instr in dis.disasm(data, start):
-            #     print(instr)
-            #     pass
-    pprint(ret)
+            if cur_expr:
+                found_expr = cur_expr
+                start_loc = loc
+                continue
 
+    # Old code that works by iterating over expressions
+    # for expr in expressions:
+    #     for decision in expr.get_decisions():
+    #         (start, end) = get_addr_range_for_expr(dwarf_locs, decision)
+    #         if end < start:
+    #             print(
+    #                 f"TODO: skipping expr at {decision.loc} because of inverted range: 0x{start:x},0x{end:x}"
+    #             )
+    #             continue
+    #         data = get_code_for_range(elffile, start, end)
+    #         if not data:
+    #             raise Exception(
+    #                 f"Can't get data for range {start:x}, {end:x}, expr: {decision} at {decision.loc}"
+    #             )
+    #         ret.append(
+    #             match_bool_expr(decision, list(dis.disasm(data, start)),
+    #                             variables))
+    #         # for instr in dis.disasm(data, start):
+    #         #     print(instr)
+    #         #     pass
+    # pprint(ret)
 
 def find_variable(variables: list[DWVariable], name: str, fname: str,
+                  line: int):
+    # TODO: Handle lexigraphical scope
+
+    for v in reversed(variables):
+        if v.name != name:
+            continue
+        if v.fname != fname:
+            continue
+        if v.line > line:
+            continue
+        #print(f"Looked for {name} at {fname}:{line} ==> found {v}")
+        return v
+    raise Exception(f"Can't find variable {name} referenced at {fname}:{line}")
+
+def get_variable_at_loc(func_die: DIE, name: str, fname: str,
                   line: int):
     # TODO: Handle lexigraphical scope
 
@@ -398,6 +473,10 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                 new_state = handle_operand(operand.casted, state)
                 return MatchState(new_state.instr_idx + 1,
                                   new_state.target_reg, False)
+            case MemberExpr():
+                # Just do the fuzzy matching and hope for best
+                state.partial = True
+                return state
             case _:
                 raise Exception(
                     f"Don't know what to do with operand {operand}")

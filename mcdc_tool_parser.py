@@ -85,7 +85,10 @@ def main():
     #     for decision in expr.get_decisions():
     #         print(decision, decision.get_leafs())
     print(f"Saving {len(expressions)} expressions")
-    pprint(expressions)
+    for expr in expressions:
+        expr.update_location_range()
+        print(f"{expr} at {expr.loc_range}")
+#    pprint(expressions)
     with open("mcdc.pickle", "wb") as f:
         pickle.dump(expressions, f)
 
@@ -246,11 +249,11 @@ def handle_expression(ast: ASTEntry) -> SAST:
                 # We are really interested only in the left part
                 return recurse(children[1])
             case "IntegerLiteral":
-                return IntLiteral(ast.loc, int(ast.data["value"]), ast)
+                return IntLiteral(ast.get_loc(), int(ast.data["value"]), ast)
             case "CharacterLiteral":
-                return IntLiteral(ast.loc, int(ast.data["value"]), ast)
+                return IntLiteral(ast.get_loc(), int(ast.data["value"]), ast)
             case "StringLiteral":
-                return StringLiteral(ast.loc, ast.data["value"], ast)
+                return StringLiteral(ast.get_loc(), ast.data["value"], ast)
             case "MemberExpr":
                 return handle_member_expr(ast)
             case "UnaryExprOrTypeTraitExpr":

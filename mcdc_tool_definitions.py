@@ -1,8 +1,10 @@
 from typing import Optional, Union
 import itertools
 import uuid
+import sys
 
 LAST_CODELOC_FILE: str = None
+
 
 class CodeLoc:
 
@@ -43,9 +45,13 @@ class CodeLoc:
 
 class CodeRange:
 
-    def __init__(self, data: dict):
-        self.begin = CodeLoc(data["begin"])
-        self.end = CodeLoc(data["end"])
+    def __init__(self, data: dict, begin=None, end=None):
+        if begin and end:
+            self.begin = begin
+            self.end = end
+        else:
+            self.begin = CodeLoc(data["begin"])
+            self.end = CodeLoc(data["end"])
 
     def __repr__(self) -> str:
         return f"{self.begin} - {self.end}"
@@ -113,13 +119,23 @@ class ASTEntry:
 
 class SAST:
     """Simple AST. Base class for other AST objects. Provides basic interface"""
+
     def __init__(self):
-        raise NotImplementedError("This class should not be constucted directly")
+        raise NotImplementedError(
+            "This class should not be constucted directly")
         # Little help for typing hints
         self.inner: list[SAST] = []
         self.parent: Optional[SAST] = None
 
-    def _derived_init_(self, loc: CodeLoc, ast: ASTEntry, inner: list[SAST], parent:Optional[SAST] = None):
+        # Calculated location range, not to be confused with
+        # ranges from ASTentry
+        self.loc_range: CodeRange = None
+
+    def _derived_init_(self,
+                       loc: CodeLoc,
+                       ast: ASTEntry,
+                       inner: list[SAST],
+                       parent: Optional[SAST] = None):
         self.inner = inner
         self.loc = loc
         self.ast = ast
@@ -127,6 +143,48 @@ class SAST:
         self._is_const = False
         self._is_var = False
         self.uuid = str(uuid.uuid4())
+
+    # If only each ASTEntry had valid code range...
+    def update_location_range(self):
+        if not self.inner:
+            if self.ast.range:
+                self.loc_range = self.ast.range
+            else:
+                self.loc_range = CodeRange({}, self.loc, self.loc)
+        else:
+            # TODO use max_loc and min_loc values instead
+            min_line = sys.maxsize
+            min_col = sys.maxsize
+            max_col = 0
+            max_line = 0
+            fname = self.loc.file
+            max_loc: CodeLoc = None
+            min_loc: CodeLoc = None
+            for ch in self.inner:
+                if not ch.loc:
+                    continue
+                ch.update_location_range()
+
+                if ch.loc.file != fname:
+                    raise Exception(
+                        f"Sub-expresions resides in an other file: {fname} vs {ch.loc.fname}"
+                    )
+                if ch.loc_range.begin.line < min_line:
+                    min_line = ch.loc_range.begin.line
+                    min_col = ch.loc_range.begin.col
+                    min_loc = ch.loc_range.begin
+                elif ch.loc_range.begin.line == min_line and ch.loc_range.begin.col < min_col:
+                    min_col = min(min_col, ch.loc_range.begin.col)
+                    min_loc = ch.loc_range.begin
+
+                if ch.loc_range.end.line > max_line:
+                    max_line = ch.loc_range.end.line
+                    max_col = ch.loc_range.end.col
+                    max_loc = ch.loc_range.end
+                elif ch.loc_range.end.line == max_line and ch.loc_range.end.col > max_col:
+                    max_col = max(max_col, ch.loc_range.end.col)
+                    max_loc = ch.loc_range.end
+            self.loc_range = CodeRange({}, min_loc, max_loc)
 
     def has_bool_expr(self) -> bool:
         "Return True if it is bool expr or has bool expressions as children"
@@ -159,51 +217,69 @@ class SAST:
             ret.extend(ch.get_topmost_bool_expr())
         return ret
 
+
 class NonBoolVar(SAST):
+
     def __init__(self, loc: CodeLoc, name: str, var_type: str, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.name = name
         self.var_type = var_type
         self._is_var = True
+
     def __repr__(self) -> str:
         return f"<NonBoolVar ({self.var_type}){self.name}>"
 
+
 class BoolVar(SAST):
+
     def __init__(self, loc: CodeLoc, name: str, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.name = name
         self._is_var = True
+
     def __repr__(self) -> str:
         return f"<BoolVar {self.name}>"
 
+
 class StringLiteral(SAST):
+
     def __init__(self, loc: CodeLoc, value: str, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.value = value
         self.is_const = True
+
     def __repr__(self) -> str:
         return f"<StringLiteral {self.value}>"
 
+
 class IntLiteral(SAST):
+
     def __init__(self, loc: CodeLoc, value: int, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.value = value
         self.is_const = True
+
     def __repr__(self) -> str:
         return f"<IntLiteral {self.value}>"
 
+
 class MemberExpr(SAST):
-    def __init__(self, loc: CodeLoc, left: SAST, right: str, arrow: bool, ast: ASTEntry):
+
+    def __init__(self, loc: CodeLoc, left: SAST, right: str, arrow: bool,
+                 ast: ASTEntry):
         self._derived_init_(loc, ast, [left])
         self.right = right
         self.arrow = arrow
         self.is_var = True
+
     @property
     def left(self):
         return self.inner[0]
+
     def __repr__(self) -> str:
         sep = "->" if self.arrow else "."
         return f"{self.left}{sep}{self.right}"
+
 
 class BoolExpression(SAST):
     OP_OR = 1
@@ -255,6 +331,7 @@ class BoolExpression(SAST):
     @property
     def a(self) -> SAST:
         return self.inner[0]
+
     @property
     def b(self) -> SAST:
         return self.inner[1]
@@ -343,7 +420,8 @@ class BoolExpression(SAST):
         for child in self.children:
             ret.extend(child.get_all_descendants())
 
-        if self.children and self.op != BoolExpression.OP_NOT and len(self.children) < 2:
+        if self.children and self.op != BoolExpression.OP_NOT and len(
+                self.children) < 2:
             ret.append(self)
         return ret
 
@@ -375,8 +453,8 @@ class BoolExpression(SAST):
 
 class NonBoolExpression(SAST):
 
-    def __init__(self, loc: CodeLoc, opcode: str,
-                 operands: list[SAST], ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, opcode: str, operands: list[SAST],
+                 ast: ASTEntry):
         self._derived_init_(loc, ast, operands)
         self.opcode = opcode
 
@@ -396,13 +474,14 @@ class NonBoolExpression(SAST):
 
 class FCall(SAST):
 
-    def __init__(self, loc: CodeLoc, fname: SAST,
-                 args: list[SAST], ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, fname: SAST, args: list[SAST],
+                 ast: ASTEntry):
         self._derived_init_(loc, ast, [fname] + args)
 
     @property
     def fname(self):
         return self.inner[0]
+
     @property
     def args(self):
         return self.inner[1:]
@@ -419,17 +498,19 @@ class FCall(SAST):
 
 class ConditionalOp(SAST):
 
-    def __init__(self, loc: CodeLoc, check: SAST,
-                 expr1: SAST, expr2: SAST, ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, check: SAST, expr1: SAST, expr2: SAST,
+                 ast: ASTEntry):
         self._derived_init_(loc, ast, [check, expr1, expr2])
         self.loc = loc
 
     @property
     def check(self):
         return self.inner[0]
+
     @property
     def expr1(self):
         return self.inner[1]
+
     @property
     def expr2(self):
         return self.inner[2]
@@ -442,21 +523,23 @@ class ConditionalOp(SAST):
         #        assert len(ret) > 0
         return super().get_leafs()
 
+
 class ArraySubscript(SAST):
 
-    def __init__(self, loc: CodeLoc, array: SAST,
-                 subscr: SAST, ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, array: SAST, subscr: SAST, ast: ASTEntry):
         self._derived_init_(loc, ast, [array, subscr])
 
     @property
     def array(self):
         return self.inner[0]
+
     @property
     def subscr(self):
         return self.inner[1]
 
     def __repr__(self) -> str:
         return f"(<array-subscr>{self.array})[{self.subscr}]"
+
 
 class SizeOf(SAST):
 
@@ -468,9 +551,11 @@ class SizeOf(SAST):
     def __repr__(self) -> str:
         return f"sizeof({self.argtype})"
 
+
 class CCast(SAST):
 
-    def __init__(self, loc: CodeLoc, cast_type: str, inner: SAST, ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, cast_type: str, inner: SAST,
+                 ast: ASTEntry):
         self._derived_init_(loc, ast, [inner])
         self.cast_type = cast_type
 
