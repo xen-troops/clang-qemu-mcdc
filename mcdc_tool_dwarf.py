@@ -33,53 +33,16 @@ class DwarfLoc:
         return f"<DwarfLoc: {self.fname, self.lp_state}>"
 
 
-def parse_locs(dwarfinfo) -> list[DwarfLoc]:
+def parse_locs(dwarfinfo, cu) -> list[DwarfLoc]:
     ret: list[LineState] = list()
-    for CU in dwarfinfo.iter_CUs():
-        lp: LineProgram = dwarfinfo.line_program_for_CU(CU)
-        fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
-        lp_entries = lp.get_entries()
-        for lp_entry in lp_entries:
-            if lp_entry.state:
-                state = lp_entry.state
-                ret.append(DwarfLoc(fnames[state.file], state))
+    lp: LineProgram = dwarfinfo.line_program_for_CU(cu)
+    fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
+    lp_entries = lp.get_entries()
+    for lp_entry in lp_entries:
+        if lp_entry.state:
+            state = lp_entry.state
+            ret.append(DwarfLoc(fnames[state.file], state))
     return ret
-
-
-def find_dw_loc(dwarf_locs: list[DwarfLoc],
-                loc: CodeLoc) -> Optional[DwarfLoc]:
-
-    for dw_loc in dwarf_locs:
-        if dw_loc.fname == loc.file and dw_loc.lp_state.line == loc.line:
-            return dw_loc
-
-    return None
-
-
-def find_dw_loc_end(dwarf_locs: list[DwarfLoc],
-                    loc: CodeLoc) -> Optional[DwarfLoc]:
-
-    for idx, dw_loc in enumerate(reversed(dwarf_locs)):
-        if dw_loc.fname == loc.file and dw_loc.lp_state.line == loc.line:
-            return dwarf_locs[idx + 1]
-
-    return None
-
-
-def get_addr_range_for_expr(dwarf_locs: list[DwarfLoc],
-                            expr: BoolExpression) -> (int, int):
-    code_range = expr.ast.range
-    if not code_range:
-        raise Exception(f"No code range for {expr}: {expr.loc}")
-    dw_loc = find_dw_loc(dwarf_locs, code_range.begin)
-    dw_loc_end = find_dw_loc_end(dwarf_locs, code_range.end)
-    if not dw_loc:
-        raise Exception(f"Can't find DWARF location for {expr}: {expr.loc}")
-    if not dw_loc_end:
-        raise Exception(
-            f"Can't find DWARF END location for {expr}: {expr.loc}")
-    return dw_loc.lp_state.address, dw_loc_end.lp_state.address
-  #  return dw_loc_end.lp_entry.address, dw_loc.lp_entry.address
 
 
 def get_code_for_range(elffile: ELFFile, start, end):
@@ -151,21 +114,6 @@ def process_inlined_function(die: DIE, loc_parser, expr_parser):
     print(die)
     pass
 
-def process_cus(dwarfinfo: DWARFInfo) -> list[DWVariable]:
-    location_lists = dwarfinfo.location_lists()
-    loc_parser = LocationParser(location_lists)
-    expr_parser = DWARFExprParser(dwarfinfo.structs)
-    ret = []
-    for CU in dwarfinfo.iter_CUs():
-        lp: LineProgram = dwarfinfo.line_program_for_CU(CU)
-        fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
-        for die in CU.get_top_DIE().iter_children():
-            if die.tag == "DW_TAG_subprogram":
-#                print(die)
-                ret.extend(
-                    process_function(die, loc_parser, expr_parser, fnames))
-    return ret
-
 def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
     fname = dw_loc.fname
     line = dw_loc.lp_state.line
@@ -181,18 +129,8 @@ def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
         return expr
     return None
 
-def process_elf(fname: str, expressions: list[SAST]):
-    f = open(fname, "rb")
-    elffile = ELFFile(f)
-    if not elffile.has_dwarf_info():
-        raise Exception("We need elf file with debugging information!")
-    dwarfinfo = elffile.get_dwarf_info()
-    set_global_machine_arch(elffile.get_machine_arch())
-    dwarf_locs = parse_locs(dwarfinfo)
-    dis = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
-    dis.detail = True
-    variables = process_cus(dwarfinfo)
-    print(variables)
+def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
+    dwarf_locs = parse_locs(dwarfinfo, cu)
     ret: list[TracePoint] = []
     start_loc: DwarfLoc = None
     found_expr: SAST = None
@@ -213,15 +151,31 @@ def process_elf(fname: str, expressions: list[SAST]):
             print(f"Found addr range 0x{start_addr:x} 0x{end_addr:x} for {found_expr}")
             if not data:
                 raise Exception(
-                    f"Can't get data for range {start:x}, {end:x}, expr: {decision} at {decision.loc}"
+                    f"Can't get data for range {start_addr:x}, {end_addr:x}, expr: {cur_expr} at {cur_expr.loc}"
                 )
             ret.append(
-                match_bool_expr(found_expr, list(dis.disasm(data, start_addr)),
-                                variables))
+                match_bool_expr(found_expr, list(dis.disasm(data, start_addr))))
             if cur_expr:
                 found_expr = cur_expr
                 start_loc = loc
                 continue
+
+    return ret
+
+def process_elf(fname: str, expressions: list[SAST]):
+    f = open(fname, "rb")
+    elffile = ELFFile(f)
+    if not elffile.has_dwarf_info():
+        raise Exception("We need elf file with debugging information!")
+    dwarfinfo = elffile.get_dwarf_info()
+    set_global_machine_arch(elffile.get_machine_arch())
+    dis = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+    dis.detail = True
+    ret: list[TracePoint] = []
+
+    for cu in dwarfinfo.iter_CUs():
+        ret.extend(process_cu(cu,elffile, dwarfinfo, dis, expressions))
+
 
     # Old code that works by iterating over expressions
     # for expr in expressions:
