@@ -16,7 +16,7 @@ def main():
     #     pprint(expr.ast.data)
     print(f"Total number of entries: {len(data)}")
     for expr in data:
-        print(expr, expr.has_fcall())
+        print(expr.uuid, expr, expr.has_fcall())
     #recurse_dump(0, data[3260].ast)
 
 def recurse_dump(shift: int, ast: ASTEntry):

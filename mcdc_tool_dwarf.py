@@ -6,6 +6,7 @@ from elftools.dwarf.locationlists import (LocationEntry, LocationExpr,
 from elftools.dwarf.lineprogram import LineProgram, LineState
 from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.die import DIE
+from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ConditionalOp, ArraySubscript
@@ -17,11 +18,14 @@ import capstone
 
 SUBPROGRAMS: dict[int, DwarfSubProgram] = {}
 
+
 class DwarfSubProgram:
+
     def __init__(self, name: str, die: DIE, addr: int):
         self.name = name
         self.die = die
         self.addr = addr
+
 
 class DwarfLoc:
 
@@ -54,6 +58,9 @@ def get_code_for_range(elffile: ELFFile, start, end):
         if start < sect_start or start > sect_start + sect_len:
             continue
         if end > sect_start + sect_len:
+            # HACK: caller adds 16 bytes, remove these here
+            end -=16
+        if end > sect_start + sect_len:
             sect_name = elffile._get_section_name(sect.header)
             raise Exception(
                 f"Section {sect_name} holds beginning of range ({start:x}, {end:x})  but not end"
@@ -63,56 +70,26 @@ def get_code_for_range(elffile: ELFFile, start, end):
 
 class DWVariable:
 
-    def __init__(self, name: str, loc_expr: DWARFExprOp, fname: str, line: int,
-                 cu):
+    def __init__(self, name: str, loc_expr: DWARFExprOp, frame_base: str):
         self.name = name
         self.loc_expr = loc_expr
-        self.fname = fname
-        self.line = line
-        self.cu = cu
+        self.frame_base = frame_base
 
     def __repr__(self) -> str:
-        return f"<DWVariable: {self.name} at {self.fname}:{self.line}>"
+        return f"<DWVariable: {self.name} at {self.loc_expr} (with FB {self.frame_base})>"
 
+class ExprTraceInfo:
+    def __init__(self, expr: SAST, tp: list [TracePoint]):
+        self.expr = expr
+        self.trace_points = tp
 
-def process_function(die: DIE, loc_parser, expr_parser,
-                     fnames: list[str]) -> list[DWVariable]:
-    ret = []
+    def format(self):
+        ret = f"; {self.expr.loc_range}\n"
+        ret += f"{self.expr.uuid}:" + ",".join((hex(t.addr) for t in self.trace_points)) + "\n"
+        return ret
 
-    SUBPROGRAMS[die.offset] = DwarfSubProgram(die.attributes["DW_AT_name"].value.decode(), die, die.offset)
-    for child in die.iter_children():
-        child: DIE
-        if child.tag in ("DW_TAG_formal_parameter", "DW_TAG_variable"):
-            name = child.attributes["DW_AT_name"].value.decode()
-            fname = child.attributes["DW_AT_decl_file"].value
-            line = child.attributes["DW_AT_decl_line"].value
-            if not "DW_AT_location" in child.attributes:
-                #TODO: Inlined functions
-#                pprint(child.attributes)
-                continue
-            parsed_loc = loc_parser.parse_from_attribute(
-                child.attributes["DW_AT_location"], die.cu["version"], die)
-            if isinstance(parsed_loc, LocationExpr):
-                loc_expr = parsed_loc.loc_expr
-            else:
-                # TODO: Need to proces the whole list
-                loc_expr = parsed_loc[0].loc_expr
-                # for entity in parsed_loc:
-                #     print(entity, type(entity))
-                # raise NotImplementedError()
-            loc = expr_parser.parse_expr(loc_expr)
-#            print(f"{name} at {fname}:{line}", loc)
-            ret.append(DWVariable(name, loc[0], fnames[fname], line, die.cu))
-        if child.tag == "DW_TAG_inlined_subroutine":
-            process_inlined_function(child, loc_parser, expr_parser)
-    return ret
-
-def process_inlined_function(die: DIE, loc_parser, expr_parser):
-    print(f"Processing inlined function {die.attributes['DW_AT_abstract_origin']}")
-    func = SUBPROGRAMS[die.attributes['DW_AT_abstract_origin'].value]
-    pprint(func.__dict__)
-    print(die)
-    pass
+    def __str__(self):
+        return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
 
 def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
     fname = dw_loc.fname
@@ -124,10 +101,12 @@ def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
             continue
         if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
             continue
-        if col < expr.loc_range.begin.col or col > expr.loc_range.end.col:
+        if (line == expr.loc_range.begin.line and col < expr.loc_range.begin.col) or (
+                line == expr.loc_range.end.line and col > expr.loc_range.end.col):
             continue
         return expr
     return None
+
 
 def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
     dwarf_locs = parse_locs(dwarfinfo, cu)
@@ -135,6 +114,9 @@ def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
     start_loc: DwarfLoc = None
     found_expr: SAST = None
     for loc in dwarf_locs:
+        # "compiler cannot attribute instruction to any source line" per Dwarf5 specification
+        if loc.lp_state.line == 0:
+            continue
         cur_expr = find_expr_for_loc(loc, expressions)
         if not cur_expr and not found_expr:
             continue
@@ -148,19 +130,22 @@ def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
             # Probably a hack, but somethimes dwarf data is a bit murky...
             end_addr = loc.lp_state.address + 16
             data = get_code_for_range(elffile, start_addr, end_addr)
-            print(f"Found addr range 0x{start_addr:x} 0x{end_addr:x} for {found_expr}")
+            print(
+                f"Found addr range 0x{start_addr:x} 0x{end_addr-16:x} for {found_expr}"
+            )
             if not data:
                 raise Exception(
                     f"Can't get data for range {start_addr:x}, {end_addr:x}, expr: {cur_expr} at {cur_expr.loc}"
                 )
             ret.append(
-                match_bool_expr(found_expr, list(dis.disasm(data, start_addr))))
-            if cur_expr:
-                found_expr = cur_expr
-                start_loc = loc
-                continue
+                match_bool_expr(cu, found_expr,
+                                list(dis.disasm(data, start_addr))))
+
+            found_expr = cur_expr
+            start_loc = loc
 
     return ret
+
 
 def process_elf(fname: str, expressions: list[SAST]):
     f = open(fname, "rb")
@@ -171,63 +156,110 @@ def process_elf(fname: str, expressions: list[SAST]):
     set_global_machine_arch(elffile.get_machine_arch())
     dis = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
     dis.detail = True
-    ret: list[TracePoint] = []
+    ret: list[ExprTraceInfo] = []
 
     for cu in dwarfinfo.iter_CUs():
-        ret.extend(process_cu(cu,elffile, dwarfinfo, dis, expressions))
+        ret.extend(process_cu(cu, elffile, dwarfinfo, dis, expressions))
+
+    with open("plugin.conf", "wt") as out:
+        out.write(f"; ELF name: {fname}\n")
+        for eti in ret:
+            out.write(eti.format())
+
+def _get_variable_loc(die: DIE, addr: int):
+    # TODO: Cache this, maybe?
+    location_lists = die.dwarfinfo.location_lists()
+    loc_parser = LocationParser(location_lists)
+    expr_parser = DWARFExprParser(die.dwarfinfo.structs)
+    parsed_loc = loc_parser.parse_from_attribute(
+        die.attributes["DW_AT_location"], die.cu["version"], die)
+    if isinstance(parsed_loc, LocationExpr):
+        loc_expr = parsed_loc.loc_expr
+    else:
+        loc_expr = parsed_loc[0].loc_expr
+        # TODO: Need to proces the whole list
+        for entity in parsed_loc:
+            print(entity, type(entity))
+        raise NotImplementedError()
+    return expr_parser.parse_expr(loc_expr)[0]
 
 
-    # Old code that works by iterating over expressions
-    # for expr in expressions:
-    #     for decision in expr.get_decisions():
-    #         (start, end) = get_addr_range_for_expr(dwarf_locs, decision)
-    #         if end < start:
-    #             print(
-    #                 f"TODO: skipping expr at {decision.loc} because of inverted range: 0x{start:x},0x{end:x}"
-    #             )
-    #             continue
-    #         data = get_code_for_range(elffile, start, end)
-    #         if not data:
-    #             raise Exception(
-    #                 f"Can't get data for range {start:x}, {end:x}, expr: {decision} at {decision.loc}"
-    #             )
-    #         ret.append(
-    #             match_bool_expr(decision, list(dis.disasm(data, start)),
-    #                             variables))
-    #         # for instr in dis.disasm(data, start):
-    #         #     print(instr)
-    #         #     pass
-    # pprint(ret)
+def _parse_frame_base(attr, func_die: DIE) -> str:
+    # TODO: Cache this, maybe?
+    location_lists = func_die.dwarfinfo.location_lists()
+    loc_parser = LocationParser(location_lists)
+    expr_parser = DWARFExprParser(func_die.dwarfinfo.structs)
+    parsed_loc = loc_parser.parse_from_attribute(attr, func_die.cu["version"],
+                                                 func_die)
+    if isinstance(parsed_loc, LocationExpr):
+        loc_expr = parsed_loc.loc_expr
+    else:
+        raise Exception("Didn't expected frame pointer to be complex expr")
+    return expr_parser.parse_expr(loc_expr)[0]
 
-def find_variable(variables: list[DWVariable], name: str, fname: str,
-                  line: int):
-    # TODO: Handle lexigraphical scope
 
-    for v in reversed(variables):
-        if v.name != name:
+def get_variable_at_loc(cu: CompileUnit, addr: int, name: str):
+    best_match = None
+    for die in cu.get_top_DIE().iter_children():
+        # At top level we can have two cases
+        # 1. We can have global variable
+        if die.tag == "DW_TAG_variable":
+            # Anonymous variable (aka const string int most cases)
+            if not "DW_AT_name" in die.attributes:
+                continue
+            if die.attributes["DW_AT_name"].value.decode() == name:
+                best_match = DWVariable(name, _get_variable_loc(die, addr), "")
+        # 2. We can have function parameter or local variable inside our function
+        if die.tag == "DW_TAG_subprogram":
+            loc = get_variable_in_func(die, addr, name)
+            if loc:
+                return loc
             continue
-        if v.fname != fname:
-            continue
-        if v.line > line:
-            continue
-        #print(f"Looked for {name} at {fname}:{line} ==> found {v}")
-        return v
-    raise Exception(f"Can't find variable {name} referenced at {fname}:{line}")
 
-def get_variable_at_loc(func_die: DIE, name: str, fname: str,
-                  line: int):
-    # TODO: Handle lexigraphical scope
+    return best_match
 
-    for v in reversed(variables):
-        if v.name != name:
-            continue
-        if v.fname != fname:
-            continue
-        if v.line > line:
-            continue
-        #print(f"Looked for {name} at {fname}:{line} ==> found {v}")
-        return v
-    raise Exception(f"Can't find variable {name} referenced at {fname}:{line}")
+
+def get_variable_in_func(func_die: DIE,
+                         addr: int,
+                         name: str,
+                         frame_base: Optional[str] = None):
+    # Ugh, inlined function
+    if "DW_AT_inline" in func_die.attributes:
+        return None
+
+    low_pc = func_die.attributes["DW_AT_low_pc"].value
+    high_pc = func_die.attributes["DW_AT_high_pc"].value
+    if func_die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
+        high_pc += low_pc
+
+    if addr < low_pc or addr > high_pc:
+        return None
+
+    best_match = None
+    if not frame_base:
+        frame_base = _parse_frame_base(func_die.attributes["DW_AT_frame_base"],
+                                       func_die).op_name
+    for child in func_die.iter_children():
+        if child.tag in ("DW_TAG_formal_parameter", "DW_TAG_variable"):
+            if "DW_AT_name" in child.attributes:
+                if child.attributes["DW_AT_name"].value.decode() != name:
+                    continue
+            elif "DW_AT_abstract_origin" in child.attributes:
+                var_info = func_die.dwarfinfo.get_DIE_from_refaddr(
+                    child.attributes["DW_AT_abstract_origin"].value)
+                if var_info.attributes["DW_AT_name"].value.decode() != name:
+                    continue
+            else:
+                raise NotImplementedError(
+                    f"Dunno what to do with this var: {child}")
+            parsed_loc = _get_variable_loc(child, addr)
+            best_match = DWVariable(name, parsed_loc, frame_base)
+        if child.tag == "DW_TAG_inlined_subroutine":
+            ret = get_variable_in_func(child, addr, name, frame_base)
+            if ret:
+                return ret
+
+    return best_match
 
 
 class MatchError(Exception):
@@ -259,6 +291,13 @@ def get_instr_reg_operand(instr: capstone.CsInsn, idx: int) -> str:
         raise MatchError(
             f"{idx}'th operand is not a register: {instr.operands[idx].type}")
     return instr.reg_name(instr.operands[idx].reg)
+
+
+def get_adrp_addr(instr: capstone.CsInsn) -> int:
+    if instr.mnemonic != "adrp":
+        raise MatchError(
+            f"Tried to get adrp offset for '{instr.mnemonic}' instruction")
+    return instr.operands[1].value.imm
 
 
 def match_instr_const_operand(instr: capstone.CsInsn, idx: int, value: int):
@@ -338,6 +377,14 @@ def match_sub_instr(instr: capstone.CsInsn, target_reg, const):
     match_instr_const_operand(instr, 2, const)
 
 
+def match_sub_instr_regs(instr: capstone.CsInsn, reg1, reg2):
+    if instr.mnemonic != "subs":
+        raise MatchError(f"Expected opcode 'subs' found {instr.mnemonic}")
+
+    match_instr_reg_operand(instr, 1, reg1)
+    match_instr_reg_operand(instr, 2, reg2)
+
+
 class TracePoint:
 
     def __init__(self, addr: int, check_for: str, bool_expr: BoolExpression):
@@ -363,8 +410,8 @@ class MatchState:
         return f"<MatchState(at={self.instr_idx} partial={self.partial} target_reg={self.target_reg})>"
 
 
-def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
-                    variables: list[DWVariable]):
+def match_bool_expr(cu: CompileUnit, expr: BoolExpression,
+                    instructions: list[capstone.CsInsn]):
 
     def fuzzy_matcher(func):
 
@@ -390,25 +437,66 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
             state.instr_idx += 2
         return state
 
+    def match_optional_bool_cast(state: MatchState) -> MatchState:
+        instr = instructions[state.instr_idx]
+        if instr.mnemonic == "and" and get_instr_reg_operand(
+                instr, 0) == state.target_reg:
+            state.instr_idx += 1
+        return state
+
     ret: list[TracePoint] = []
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
+        print("handle_operand", type(operand))
         match operand:
             case BoolVar() | NonBoolVar():
                 print(f"Handling variable '{operand}'")
-                v = find_variable(variables, operand.name, operand.loc.file,
-                                  operand.loc.line)
-                if v.loc_expr.op_name == "DW_OP_fbreg":
-                    target_reg = "fp"
-                    offset = v.loc_expr.args[0]
-                else:
-                    raise Exception(f"Unknown var op {v.loc_expr.op_name}")
-                instr = instructions[state.instr_idx]
-                match_instr_read_mem_operand(instr, 1, target_reg, offset)
-                print(f"  Found read at 0x{instr.address:x}")
-                return MatchState(state.instr_idx + 1,
-                                  instr.reg_name(instr.operands[0].reg))
+                v = get_variable_at_loc(cu,
+                                        instructions[state.instr_idx].address,
+                                        operand.name)
+                print("Got", v)
+                if not v:
+                    raise Exception(
+                        f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
+                    )
+                match v.loc_expr.op_name:
+                    case "DW_OP_fbreg":
+                        match v.frame_base:
+                            case "DW_OP_reg31":
+                                target_reg = "sp"
+                            case "DW_OP_reg29":
+                                target_reg = "fp"
+                            case _:
+                                raise Exception(f"TODO: Match reg {v.frame_base}")
+                        offset = v.loc_expr.args[0]
+                        instr = instructions[state.instr_idx]
+                        match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                        print(f"  Found read at 0x{instr.address:x}")
+                        return MatchState(state.instr_idx + 1,
+                                      instr.reg_name(instr.operands[0].reg))
+                    case "DW_OP_addrx":
+                        abs_addr = cu.dwarfinfo.get_addr(cu, v.loc_expr.args[0])
+                        print(f"Global variable offset is {abs_addr:x}")
+                        instr = instructions[state.instr_idx]
+                        offset = get_adrp_addr(instr)
+                        reg = get_instr_reg_operand(instr, 0)
+                        rem = abs_addr - offset
+                        print(f"remained is {rem} in {reg}")
+                        instr = instructions[state.instr_idx + 1]
+                        match_instr_read_mem_operand(instr, 1, reg, rem)
+                        return MatchState(state.instr_idx + 2,
+                                      instr.reg_name(instr.operands[0].reg))
+                    case "DW_OP_breg31":
+                        target_reg = "sp"
+                        offset = v.loc_expr.args[0]
+                        instr = instructions[state.instr_idx]
+                        match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                        print(f"  Found read at 0x{instr.address:x}")
+                        return MatchState(state.instr_idx + 1,
+                                      instr.reg_name(instr.operands[0].reg))
+                    case _:
+                        raise Exception(f"Unknown var op {v.loc_expr.op_name}")
             case IntLiteral():
                 print(
                     f"Handling int const '{operand.value}' for reg {state.target_reg}"
@@ -429,6 +517,7 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                                   new_state.target_reg, False)
             case MemberExpr():
                 # Just do the fuzzy matching and hope for best
+                state = handle_operand(operand.left, state)
                 state.partial = True
                 return state
             case _:
@@ -440,13 +529,42 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
         print(f"Recurse, handling {e} at {e.loc}")
         assert isinstance(e, BoolExpression)
         match e.op:
-            case BoolExpression.OP_EQ | BoolExpression.OP_XOR:
+            case BoolExpression.OP_EQ:
                 print(f"EQ: op1: {e.a} op2: {e.b}")
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
                 print(f"EQ handled state1: {new_state}")
                 new_state = handle_operand(e.b, new_state)
                 print(f"EQ handled state2: {new_state}")
+                idx = new_state.instr_idx
+                # Optional write to variable
+                if instructions[idx].mnemonic in ("str", "stur"):
+                    idx += 1
+                if instructions[idx].mnemonic == "cset":
+                    pass
+                elif instructions[idx].mnemonic == "b.eq":
+                    match_branch_isntr(instructions[idx], "b.eq")
+                    match_branch_isntr(instructions[idx + 1], "b")
+                else:
+                    match_branch_isntr(instructions[idx], "b.ne")
+                    match_branch_isntr(instructions[idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[idx].address, "'EQ FLAG(TODO)'",
+                               e))
+                return MatchState(idx + 2)
+            case BoolExpression.OP_XOR:
+                print(f"XOR: op1: {e.a} op2: {e.b}")
+                op1_state = handle_operand(e.a, state)
+                op1_state = match_optional_bool_cast(op1_state)
+                print(f"XOR handled state1: {op1_state}")
+                op2_state = handle_operand(e.b, op1_state)
+                op2_state = match_optional_bool_cast(op2_state)
+                print(f"XOR handled state2: {op2_state}")
+                instr = instructions[op2_state.instr_idx]
+                match_sub_instr_regs(instr, op1_state.target_reg,
+                                     op2_state.target_reg)
+                new_state = MatchState(op2_state.instr_idx + 1,
+                                       get_instr_reg_operand(instr, 0))
                 idx = new_state.instr_idx
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
@@ -484,18 +602,20 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                 new_state = handle_operand(e.b, new_state)
                 if isinstance(e.b, BoolVar):
                     if instructions[new_state.instr_idx].mnemonic == "tbz":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
+                        match_branch_isntr(
+                            instructions[new_state.instr_idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'ZERO FLAG (TODO)'", e.b))
+                            TracePoint(
+                                instructions[new_state.instr_idx].address,
+                                "'ZERO FLAG (TODO)'", e.b))
                         new_state.instr_idx += 2
                     elif instructions[new_state.instr_idx].mnemonic == "tbnz":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
+                        match_branch_isntr(
+                            instructions[new_state.instr_idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'NOT ZERO FLAG (TODO)'", e.b))
+                            TracePoint(
+                                instructions[new_state.instr_idx].address,
+                                "'NOT ZERO FLAG (TODO)'", e.b))
                         new_state.instr_idx += 2
                 return new_state
             case BoolExpression.OP_AND:
@@ -519,18 +639,20 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
                 new_state = handle_operand(e.b, new_state)
                 if isinstance(e.b, BoolVar):
                     if instructions[new_state.instr_idx].mnemonic == "tbz":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
+                        match_branch_isntr(
+                            instructions[new_state.instr_idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'ZERO FLAG (TODO)'", e.b))
+                            TracePoint(
+                                instructions[new_state.instr_idx].address,
+                                "'ZERO FLAG (TODO)'", e.b))
                         new_state.instr_idx += 2
                     elif instructions[new_state.instr_idx].mnemonic == "tbnz":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
+                        match_branch_isntr(
+                            instructions[new_state.instr_idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'NOT ZERO FLAG (TODO)'", e.b))
+                            TracePoint(
+                                instructions[new_state.instr_idx].address,
+                                "'NOT ZERO FLAG (TODO)'", e.b))
                         new_state.instr_idx += 2
                 #     # Need to handle last variable
                 return new_state
@@ -577,7 +699,7 @@ def match_bool_expr(expr: BoolExpression, instructions: list[capstone.CsInsn],
     # TODO: Remove min, this is only for debugging
     recurse(expr, MatchState(0, partial=True))
     pprint(ret)
-    return ret
+    return ExprTraceInfo(expr, ret)
 
 
 #    for expr in expressions:

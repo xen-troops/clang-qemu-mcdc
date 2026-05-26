@@ -278,7 +278,7 @@ class MemberExpr(SAST):
 
     def __repr__(self) -> str:
         sep = "->" if self.arrow else "."
-        return f"{self.left}{sep}{self.right}"
+        return f"<MemberExpr {self.left}{sep}{self.right}>"
 
 
 class BoolExpression(SAST):

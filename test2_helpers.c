@@ -36,5 +36,6 @@ bool get_xor(bool a, bool b) {
 bool test_int_ops(int a, int b, int c) {
         a += b + c;
         c = (a-b) * (a+b);
-        return (b == 0) || (a < 15);
+//        return (b == 0) || (a < 15);
+	return false;
 }

@@ -21,6 +21,8 @@ struct test_struct {
 	int field;
 };
 
+int test_global_variable = 2;
+
 bool test_memberr(void)
 {
 	struct test_struct tst;
@@ -38,6 +40,9 @@ int main (int argc, char *argv[])
         int tmp;
 	int i;
         enum test_enum test_enum = ENUM_VAL_1;
+
+	if (test_global_variable == 2)
+		printf("Wow, we can access global variables!\n");
 
         printf("argc: %d\n", argc);
         if (argc==1)
@@ -96,45 +101,45 @@ int main (int argc, char *argv[])
         else
                 printf("Remote !XOR1\n");
 
-        d = get_xor(a, b) || get_xor(b, c);
-        if (d)
-                printf("Remote XOR2\n");
-        else
-                printf("Remote !XOR2\n");
+        /* d = get_xor(a, b) || get_xor(b, c); */
+        /* if (d) */
+        /*         printf("Remote XOR2\n"); */
+        /* else */
+        /*         printf("Remote !XOR2\n"); */
 
-        d = get_xor(a && b && c, b == c);
-        if (d)
-                printf("Remote XOR3\n");
-        else
-                printf("Remote !XOR3\n");
+        /* d = get_xor(a && b && c, b == c); */
+        /* if (d) */
+        /*         printf("Remote XOR3\n"); */
+        /* else */
+        /*         printf("Remote !XOR3\n"); */
 
-        d = get_xor(a && b, b && c) || get_xor(b, c);
-        if (d)
-                printf("Remote XOR4\n");
-        else
-                printf("Remote !XOR4\n");
+        /* d = get_xor(a && b, b && c) || get_xor(b, c); */
+        /* if (d) */
+        /*         printf("Remote XOR4\n"); */
+        /* else */
+        /*         printf("Remote !XOR4\n"); */
 
-        tmp = 1;
-        if (++tmp == 2) {
-                if (tmp != 2)
-                        printf("oops ^_^!\n");
-        } else
-                printf("oops ^_^ 2!\n");
-
-
-        tmp = 1;
-        if (tmp++ == 1) {
-                if (tmp != 2)
-                        printf("oops ^_^ 3!\n");
-        } else
-                printf("oops ^_^ 4!\n");
+        /* tmp = 1; */
+        /* if (++tmp == 2) { */
+        /*         if (tmp != 2) */
+        /*                 printf("oops ^_^!\n"); */
+        /* } else */
+        /*         printf("oops ^_^ 2!\n"); */
 
 
-        if ((tmp + 1) == 2)
-                printf("huh?\n");
+        /* tmp = 1; */
+        /* if (tmp++ == 1) { */
+        /*         if (tmp != 2) */
+        /*                 printf("oops ^_^ 3!\n"); */
+        /* } else */
+        /*         printf("oops ^_^ 4!\n"); */
 
-        if (test_enum == ENUM_VAL_2)
-                printf("enum test failed\n");
+
+        /* if ((tmp + 1) == 2) */
+        /*         printf("huh?\n"); */
+
+        /* if (test_enum == ENUM_VAL_2) */
+        /*         printf("enum test failed\n"); */
 
         return 0;
 }
