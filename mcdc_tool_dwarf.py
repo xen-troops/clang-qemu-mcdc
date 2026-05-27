@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 from elftools.dwarf.descriptions import (describe_DWARF_expr,
