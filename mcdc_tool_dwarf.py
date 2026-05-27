@@ -114,7 +114,7 @@ class ExprTraceInfo:
 
     def format(self):
         ret = f"; {self.expr.loc_range}\n"
-        ret += f"{self.expr.uuid}:" + ",".join(
+        ret += f"{self.expr.uuid} " + ",".join(
             (hex(t.addr) for t in self.trace_points)) + "\n"
         return ret
 
