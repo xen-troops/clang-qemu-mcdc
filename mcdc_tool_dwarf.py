@@ -1,4 +1,5 @@
 from elftools.elf.elffile import ELFFile
+from elftools.elf.sections import SymbolTableSection
 from elftools.dwarf.descriptions import (describe_DWARF_expr,
                                          set_global_machine_arch)
 from elftools.dwarf.locationlists import (LocationEntry, LocationExpr,
@@ -118,6 +119,9 @@ def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
         if loc.lp_state.line == 0:
             continue
         cur_expr = find_expr_for_loc(loc, expressions)
+
+        # TODO: Find the end of expressions by looking backwards
+
         if not cur_expr and not found_expr:
             continue
         if not found_expr:
@@ -138,7 +142,7 @@ def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
                     f"Can't get data for range {start_addr:x}, {end_addr:x}, expr: {cur_expr} at {cur_expr.loc}"
                 )
             ret.append(
-                match_bool_expr(cu, found_expr,
+                match_bool_expr(cu, elffile, found_expr,
                                 list(dis.disasm(data, start_addr))))
 
             found_expr = cur_expr
@@ -218,6 +222,25 @@ def get_variable_at_loc(cu: CompileUnit, addr: int, name: str):
 
     return best_match
 
+# TODO: Add some caching?
+def find_symbol(elf: ELFFile, name: str) -> Optional[int]:
+    sym_table: SymbolTableSection = elf.get_section_by_name(".symtab")
+    if not sym_table:
+        raise Exception("Can't find .symtab section in provided ELF")
+    assert isinstance(sym_table, SymbolTableSection)
+    syms = sym_table.get_symbol_by_name(name)
+    if not syms:
+        return None
+    if len(syms) > 1:
+        raise Exception(f"Found more that one symtab entry for {name}")
+    return syms[0]
+
+def is_inlined_function(cu: CompileUnit, name: str) -> bool:
+    for child in cu.iter_DIEs():
+        if child.tag == "DW_TAG_subprogram":
+            if child.attributes["DW_AT_name"].value.decode() == name and "DW_AT_inline" in child.attributes:
+                return True
+    return False
 
 def get_variable_in_func(func_die: DIE,
                          addr: int,
@@ -410,7 +433,7 @@ class MatchState:
         return f"<MatchState(at={self.instr_idx} partial={self.partial} target_reg={self.target_reg})>"
 
 
-def match_bool_expr(cu: CompileUnit, expr: BoolExpression,
+def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     instructions: list[capstone.CsInsn]):
 
     def fuzzy_matcher(func):
@@ -445,6 +468,30 @@ def match_bool_expr(cu: CompileUnit, expr: BoolExpression,
         return state
 
     ret: list[TracePoint] = []
+
+    def handle_fcall(operand: SAST, state: MatchState):
+        print(f"Fcall for {operand.fname}")
+        if isinstance(operand.fname, NonBoolVar):
+            if is_inlined_function(cu, operand.fname.name):
+                print(f"Okay, so {operand} is inlined. Great")
+                raise NotImplementedError()
+
+            # Try looking in in global symbol table
+            sym = find_symbol(elf, operand.fname.name)
+            print(f"Found symobl {sym}")
+            func_addr = sym["st_value"]
+            print(f"func address is {func_addr:x}")
+            for idx in range(state.instr_idx, len(instructions)):
+                instr = instructions[idx]
+                if instr.mnemonic == "bl" and instr.operands[0].value.imm == func_addr:
+                    return MatchState(idx + 1, "x0")
+            else:
+                raise MatchError("Can't find function call")
+        raise NotImplementedError()
+        state = handle_operand(operand.fname, state)
+        state.partial = True
+        return state
+
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
@@ -520,6 +567,8 @@ def match_bool_expr(cu: CompileUnit, expr: BoolExpression,
                 state = handle_operand(operand.left, state)
                 state.partial = True
                 return state
+            case FCall():
+                return handle_fcall(operand, state)
             case _:
                 raise Exception(
                     f"Don't know what to do with operand {operand}")

@@ -70,8 +70,10 @@ int main (int argc, char *argv[])
         if(printf("%d %d %d %d\n", a || d, b, c, d) > 6)
                 printf("Test for printf itself \n");
 
-	if (my_inlined_func(a, b) > 22)
-		printf("Test for inlined func\n");
+	/* if (my_inlined_func(a, b) > 22) */
+	/* 	printf("Test for inlined func\n"); */
+
+	my_inlined_func(a, b);
 
         if ( a && b && c && d)
                 printf("ALL IN\n");
@@ -101,11 +103,11 @@ int main (int argc, char *argv[])
         else
                 printf("Remote !XOR1\n");
 
-        /* d = get_xor(a, b) || get_xor(b, c); */
-        /* if (d) */
-        /*         printf("Remote XOR2\n"); */
-        /* else */
-        /*         printf("Remote !XOR2\n"); */
+        d = get_xor(a, b) || get_xor(b, c);
+        if (d)
+                printf("Remote XOR2\n");
+        else
+                printf("Remote !XOR2\n");
 
         /* d = get_xor(a && b && c, b == c); */
         /* if (d) */

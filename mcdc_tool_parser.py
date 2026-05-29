@@ -75,12 +75,22 @@ def get_bool_expr_list() -> list[BoolExpression]:
         bool_expr.extend(expr)
     return bool_expr
 
+def lift_up_fcalls(expressions: list[SAST]):
+    subexpr = []
+    for expr in expressions:
+        args = expr.lift_fcall_args()
+        # We are interested only in internal bool expressions (if any)
+        for a in args:
+            subexpr.extend(a.get_topmost_bool_expr())
+
+    expressions.extend(subexpr)
 
 def main():
     expressions = get_bool_expr_list()
+    lift_up_fcalls(expressions)
     filter_same_expr(expressions)
     filter_by_source(expressions)
-    filter_by_fcall(expressions)
+    #filter_by_fcall(expressions)
     # for expr in expressions:
     #     for decision in expr.get_decisions():
     #         print(decision, decision.get_leafs())
@@ -201,7 +211,7 @@ def handle_expression(ast: ASTEntry) -> SAST:
     def handle_call(ast: ASTEntry):
         fname = recurse(ast.inner[0])
         args = [recurse(x) for x in ast.inner[1:]]
-        return FCall(ast.loc, fname, args, ast)
+        return FCall(ast.get_loc(), fname, args, ast)
 
     def handle_member_expr(ast: ASTEntry):
         children = ast.inner

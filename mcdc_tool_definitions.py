@@ -202,6 +202,15 @@ class SAST:
         "Returns list of top-most boolean expressions or `decisions` in MC/DC lingo"
         return list(itertools.chain.from_iterable(ch.get_decisions() for ch in self.inner))
 
+    def lift_fcall_args(self) -> list[SAST]:
+        """
+        Replace all inner function call arguments with placeholder
+        and return arguments as list of expressions
+
+        N.B. This will change structure of the inner tree
+        """
+        return list(itertools.chain.from_iterable(ch.lift_fcall_args() for ch in self.inner))
+
     def is_const(self) -> bool:
         return self._is_const
 
@@ -495,6 +504,28 @@ class FCall(SAST):
         "Of course I know him, because it's me"
         return True
 
+    def lift_fcall_args(self) -> list[SAST]:
+        """
+        Replace all inner function call arguments with placeholder
+        and return arguments as list of expressions
+
+        N.B. This will change structure of the inner tree
+        """
+        ret: list[SAST] = []
+        for idx, arg in enumerate(self.args):
+            ret.append(arg)
+            # Save location and AST for debugging value
+            self.inner[idx + 1] = FCallArg(arg.loc, arg.ast)
+        return ret
+
+class FCallArg(SAST):
+    """Placeholder for functinal call argument, as we in fact are not interested in its value"""
+
+    def __init__(self, loc: CodeLoc, ast: ASTEntry):
+        self._derived_init_(loc, ast, [])
+
+    def __repr__(self) -> str:
+        return f"<FCallArg at {self.loc}>"
 
 class ConditionalOp(SAST):
 
