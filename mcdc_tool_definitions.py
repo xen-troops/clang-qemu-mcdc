@@ -196,11 +196,11 @@ class SAST:
 
     def get_leafs(self) -> list[BoolExpression]:
         "Returns list of leaf boolean expressions or `conditions` in MC/DC lingo"
-        return list(itertools.chain(ch.get_leafs() for ch in self.inner))
+        return list(itertools.chain.from_iterable(ch.get_leafs() for ch in self.inner))
 
     def get_decisions(self) -> list[BoolExpression]:
         "Returns list of top-most boolean expressions or `decisions` in MC/DC lingo"
-        return list(itertools.chain(ch.get_decisions() for ch in self.inner))
+        return list(itertools.chain.from_iterable(ch.get_decisions() for ch in self.inner))
 
     def is_const(self) -> bool:
         return self._is_const
