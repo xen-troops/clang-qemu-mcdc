@@ -253,7 +253,7 @@ def get_variable_in_func(func_die: DIE,
     low_pc = func_die.attributes["DW_AT_low_pc"].value
     high_pc = func_die.attributes["DW_AT_high_pc"].value
     if func_die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
-        high_pc += low_pc
+        high_pc += low_pc - 4
 
     if addr < low_pc or addr > high_pc:
         return None
