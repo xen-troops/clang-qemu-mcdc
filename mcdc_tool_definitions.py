@@ -249,6 +249,10 @@ class BoolVar(SAST):
     def __repr__(self) -> str:
         return f"<BoolVar {self.name}>"
 
+    def get_leafs(self) -> list[SAST]:
+        # Bool var is always a leaf
+        return [self]
+
 
 class StringLiteral(SAST):
 
