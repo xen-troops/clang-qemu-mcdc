@@ -16,6 +16,7 @@ import sys
 from typing import Optional
 from pprint import pprint
 import capstone
+from mcdc_tool_capstone_helper import aarch64_reg_name
 
 SUBPROGRAMS: dict[int, DwarfSubProgram] = {}
 
@@ -299,9 +300,9 @@ def match_instr_reg_operand(instr: capstone.CsInsn, idx: int, reg: str):
     if instr.operands[idx].type != capstone.arm64_const.ARM64_OP_REG:
         raise MatchError(
             f"{idx}'th operand is not a register: {instr.operands[idx].type}")
-    if instr.reg_name(instr.operands[idx].reg)[1:] != reg[1:]:
+    if aarch64_reg_name(instr.operands[idx].reg)[1:] != reg[1:]:
         raise MatchError(
-            f"{idx}'th register is not one that we expect: {instr.reg_name(instr.operands[idx].reg)} != {reg}"
+            f"{idx}'th register is not one that we expect: {aarch64_reg_name(instr.operands[idx].reg)} != {reg}"
         )
 
 
@@ -313,7 +314,7 @@ def get_instr_reg_operand(instr: capstone.CsInsn, idx: int) -> str:
     if instr.operands[idx].type != capstone.arm64_const.ARM64_OP_REG:
         raise MatchError(
             f"{idx}'th operand is not a register: {instr.operands[idx].type}")
-    return instr.reg_name(instr.operands[idx].reg)
+    return aarch64_reg_name(instr.operands[idx].reg)
 
 
 def get_adrp_addr(instr: capstone.CsInsn) -> int:
@@ -349,9 +350,9 @@ def match_instr_mem_operand(instr: capstone.CsInsn, idx: int, base_reg: str,
         raise MatchError(
             f"{idx}'th operand is not an memory op: {operand.type}")
 
-    if instr.reg_name(operand.value.mem.base) != base_reg:
+    if aarch64_reg_name(operand.value.mem.base) != base_reg:
         raise MatchError(
-            f"{idx}'th reg does not match: {instr.reg_name(operand.value.mem.base)} != {base_reg}"
+            f"{idx}'th reg does not match: {aarch64_reg_name(operand.value.mem.base)} != {base_reg}"
         )
 
     if offset and operand.value.mem.disp != offset:
@@ -374,9 +375,9 @@ def match_instr_read_mem_operand(instr: capstone.CsInsn, idx: int,
         raise MatchError(
             f"{idx}'th operand is not an memory op: {operand.type}")
 
-    if instr.reg_name(operand.value.mem.base) != base_reg:
+    if aarch64_reg_name(operand.value.mem.base) != base_reg:
         raise MatchError(
-            f"{idx}'th reg does not match: {instr.reg_name(operand.value.mem.base)} != {base_reg}"
+            f"{idx}'th reg does not match: {aarch64_reg_name(operand.value.mem.base)} != {base_reg}"
         )
 
     if offset and operand.value.mem.disp != offset:
@@ -513,7 +514,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                             case "DW_OP_reg31":
                                 target_reg = "sp"
                             case "DW_OP_reg29":
-                                target_reg = "fp"
+                                target_reg = "x29"
                             case _:
                                 raise Exception(f"TODO: Match reg {v.frame_base}")
                         offset = v.loc_expr.args[0]
@@ -521,7 +522,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_instr_read_mem_operand(instr, 1, target_reg, offset)
                         print(f"  Found read at 0x{instr.address:x}")
                         return MatchState(state.instr_idx + 1,
-                                      instr.reg_name(instr.operands[0].reg))
+                                      aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_addrx":
                         abs_addr = cu.dwarfinfo.get_addr(cu, v.loc_expr.args[0])
                         print(f"Global variable offset is {abs_addr:x}")
@@ -533,7 +534,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         instr = instructions[state.instr_idx + 1]
                         match_instr_read_mem_operand(instr, 1, reg, rem)
                         return MatchState(state.instr_idx + 2,
-                                      instr.reg_name(instr.operands[0].reg))
+                                      aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_breg31":
                         target_reg = "sp"
                         offset = v.loc_expr.args[0]
@@ -541,7 +542,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_instr_read_mem_operand(instr, 1, target_reg, offset)
                         print(f"  Found read at 0x{instr.address:x}")
                         return MatchState(state.instr_idx + 1,
-                                      instr.reg_name(instr.operands[0].reg))
+                                      aarch64_reg_name(instr.operands[0].reg))
                     case _:
                         raise Exception(f"Unknown var op {v.loc_expr.op_name}")
             case IntLiteral():
