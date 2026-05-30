@@ -3,6 +3,8 @@
 
 bool get_xor(bool a, bool b);
 
+
+
 static int __attribute__((__always_inline__)) my_inlined_func(bool a, bool b)
 {
 	if (a != b)
@@ -11,6 +13,24 @@ static int __attribute__((__always_inline__)) my_inlined_func(bool a, bool b)
 		return 69;
 	return 1337;
 }
+
+static int __attribute__((__always_inline__)) my_second_inlined_func(int arg)
+{
+	if (arg)
+		return 1;
+	if (!arg)
+		return 2;
+	return 3;
+}
+
+/* We need to go deeper */
+static int __attribute__((__always_inline__)) my_deeply_inlined_func(void)
+{
+	if (my_second_inlined_func(1) == 0)
+		return 1;
+	return my_inlined_func(true, false) || my_second_inlined_func(1);
+}
+
 
 enum test_enum {
         ENUM_VAL_1,
@@ -70,10 +90,11 @@ int main (int argc, char *argv[])
         if(printf("%d %d %d %d\n", a || d, b, c, d) > 6)
                 printf("Test for printf itself \n");
 
-	/* if (my_inlined_func(a, b) > 22) */
-	/* 	printf("Test for inlined func\n"); */
+	if (my_inlined_func(a, b) > 22)
+		printf("Test for inlined func\n");
 
-	my_inlined_func(a, b);
+	if (a || (my_deeply_inlined_func() == 0))
+		printf("my_deeply_inlined_func returned true!\n");
 
         if ( a && b && c && d)
                 printf("ALL IN\n");

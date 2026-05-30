@@ -18,15 +18,15 @@ from pprint import pprint
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
 
-SUBPROGRAMS: dict[int, DwarfSubProgram] = {}
-
-
-class DwarfSubProgram:
-
-    def __init__(self, name: str, die: DIE, addr: int):
+class DwarfInlinedFunc:
+    def __init__(self, name: str, die: DIE, low_addr: int, high_addr: int):
         self.name = name
         self.die = die
-        self.addr = addr
+        self.low_addr = low_addr
+        self.high_addr = high_addr
+
+    def __repr__(self) -> str:
+        return f"<DwarfInlinedFunc {self.name}: {hex(self.low_addr)} - {hex(self.high_addr)}>"
 
 
 class DwarfLoc:
@@ -93,7 +93,7 @@ class ExprTraceInfo:
     def __str__(self):
         return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
 
-def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
+def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
     fname = dw_loc.fname
     line = dw_loc.lp_state.line
     col = dw_loc.lp_state.column
@@ -110,19 +110,56 @@ def find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
     return None
 
 
-def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
-    dwarf_locs = parse_locs(dwarfinfo, cu)
-    ret: list[TracePoint] = []
-    start_loc: DwarfLoc = None
+def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc], start_idx: int) -> int:
+    last_line = expr.loc_range.end.line
+    last_col = expr.loc_range.end.col
+    ret: DwarfLoc = None
+    for idx in range(start_idx, len(locs)):
+        loc = locs[idx]
+        if loc.lp_state.line == last_line and loc.lp_state.column <= last_col:
+            return loc
+    raise Exception("How it is possible that we found start for expression, but can't find an end?")
+    return ret
+
+def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
+    def _process_dies(die: DIE) -> list[DwarfInlinedFunc]:
+        ret = []
+        for child in die.iter_children():
+            if child.tag == "DW_TAG_inlined_subroutine":
+                func_info = cu.dwarfinfo.get_DIE_from_refaddr(
+                    child.attributes["DW_AT_abstract_origin"].value)
+                low_pc = child.attributes["DW_AT_low_pc"].value
+                high_pc = child.attributes["DW_AT_high_pc"].value
+                if child.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
+                    high_pc += low_pc - 4
+                ret.append(DwarfInlinedFunc(func_info.attributes["DW_AT_name"].value.decode(),die,low_pc, high_pc))
+            if child.has_children:
+                ret.extend(_process_dies(child))
+        return ret
+    return _process_dies(cu.get_top_DIE())
+
+def _addr_inside_inline(inlines: list[DwarfInlinedFunc], addr: int) -> bool:
+    return any((inline.low_addr >= addr and inline.high_addr <= addr for inline in inlines))
+
+class ExprAddressData:
+    def __init__(self, expr: SAST, start_addr: int, end_addr: int, skip_list: list[(int, int)], loc_idx: int):
+        self.expr = expr
+        self.start_addr = start_addr
+        self.end_addr = end_addr
+        self.skip_list = skip_list
+        self.loc_idx = loc_idx
+    def __repr__(self) -> str:
+        return f"<ExprData {hex(self.start_addr)}-{hex(self.end_addr)} for {self.expr} at {self.expr.loc_range}>"
+
+def _get_next_expr_for_processing(locs: list[DwarfLoc], expressions: list[SAST], inlines: list[DwarfInlinedFunc], start_idx) -> Optional[ExprAddressData]:
     found_expr: SAST = None
-    for loc in dwarf_locs:
+    start_loc: DwarfLoc = None
+    for i in range(start_idx, len(locs)):
+        loc = locs[i]
         # "compiler cannot attribute instruction to any source line" per Dwarf5 specification
         if loc.lp_state.line == 0:
             continue
-        cur_expr = find_expr_for_loc(loc, expressions)
-
-        # TODO: Find the end of expressions by looking backwards
-
+        cur_expr = _find_expr_for_loc(loc, expressions)
         if not cur_expr and not found_expr:
             continue
         if not found_expr:
@@ -134,20 +171,23 @@ def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
             start_addr = start_loc.lp_state.address
             # Probably a hack, but somethimes dwarf data is a bit murky...
             end_addr = loc.lp_state.address + 16
-            data = get_code_for_range(elffile, start_addr, end_addr)
-            print(
-                f"Found addr range 0x{start_addr:x} 0x{end_addr-16:x} for {found_expr}"
-            )
-            if not data:
-                raise Exception(
-                    f"Can't get data for range {start_addr:x}, {end_addr:x}, expr: {cur_expr} at {cur_expr.loc}"
-                )
-            ret.append(
-                match_bool_expr(cu, elffile, found_expr,
-                                list(dis.disasm(data, start_addr))))
+            return ExprAddressData(found_expr, start_addr, end_addr, [], i)
+    return None
 
-            found_expr = cur_expr
-            start_loc = loc
+def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
+    dwarf_locs = parse_locs(dwarfinfo, cu)
+    ret: list[TracePoint] = []
+    inlines = _collect_inlines(cu)
+    idx = 0
+    while next_expr := _get_next_expr_for_processing(dwarf_locs, expressions, inlines, idx):
+        data = get_code_for_range(elffile, next_expr.start_addr, next_expr.end_addr)
+        print(f"Found next expr: {next_expr}" )
+        if not data:
+            raise Exception(f"Can't get data for expr {next_expr}" )
+        ret.append(
+            match_bool_expr(cu, elffile, next_expr.expr,
+                            list(dis.disasm(data, next_expr.start_addr))))
+        idx = next_expr.loc_idx
 
     return ret
 
@@ -479,9 +519,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
             # Try looking in in global symbol table
             sym = find_symbol(elf, operand.fname.name)
-            print(f"Found symobl {sym}")
             func_addr = sym["st_value"]
-            print(f"func address is {func_addr:x}")
             for idx in range(state.instr_idx, len(instructions)):
                 instr = instructions[idx]
                 if instr.mnemonic == "bl" and instr.operands[0].value.imm == func_addr:
@@ -499,11 +537,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         print("handle_operand", type(operand))
         match operand:
             case BoolVar() | NonBoolVar():
-                print(f"Handling variable '{operand}'")
                 v = get_variable_at_loc(cu,
                                         instructions[state.instr_idx].address,
                                         operand.name)
-                print("Got", v)
                 if not v:
                     raise Exception(
                         f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
@@ -553,7 +589,6 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                 state.target_reg, operand.value)
                 return MatchState(state.instr_idx + 1, state.target_reg)
             case BoolExpression():
-                print("Handling bool expr")
                 return recurse(operand, state)
             case ArraySubscript():
                 new_state = handle_operand(operand.array, state)
@@ -580,12 +615,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         assert isinstance(e, BoolExpression)
         match e.op:
             case BoolExpression.OP_EQ:
-                print(f"EQ: op1: {e.a} op2: {e.b}")
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
-                print(f"EQ handled state1: {new_state}")
                 new_state = handle_operand(e.b, new_state)
-                print(f"EQ handled state2: {new_state}")
                 idx = new_state.instr_idx
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
@@ -603,13 +635,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                e))
                 return MatchState(idx + 2)
             case BoolExpression.OP_XOR:
-                print(f"XOR: op1: {e.a} op2: {e.b}")
                 op1_state = handle_operand(e.a, state)
                 op1_state = match_optional_bool_cast(op1_state)
-                print(f"XOR handled state1: {op1_state}")
                 op2_state = handle_operand(e.b, op1_state)
                 op2_state = match_optional_bool_cast(op2_state)
-                print(f"XOR handled state2: {op2_state}")
                 instr = instructions[op2_state.instr_idx]
                 match_sub_instr_regs(instr, op1_state.target_reg,
                                      op2_state.target_reg)
@@ -632,7 +661,6 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                e))
                 return MatchState(idx + 2)
             case BoolExpression.OP_OR:
-                print("Handling OR")
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
                 if instructions[new_state.instr_idx].mnemonic == "tbnz":
