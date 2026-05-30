@@ -17,8 +17,11 @@ from typing import Optional
 from pprint import pprint
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
+import os
+
 
 class DwarfInlinedFunc:
+
     def __init__(self, name: str, die: DIE, low_addr: int, high_addr: int):
         self.name = name
         self.die = die
@@ -39,9 +42,9 @@ class DwarfLoc:
         return f"<DwarfLoc: {self.fname, self.lp_state}>"
 
 
-def parse_locs(dwarfinfo, cu) -> list[DwarfLoc]:
+def parse_locs(cu) -> list[DwarfLoc]:
     ret: list[LineState] = list()
-    lp: LineProgram = dwarfinfo.line_program_for_CU(cu)
+    lp: LineProgram = cu.dwarfinfo.line_program_for_CU(cu)
     fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
     lp_entries = lp.get_entries()
     for lp_entry in lp_entries:
@@ -61,7 +64,7 @@ def get_code_for_range(elffile: ELFFile, start, end):
             continue
         if end > sect_start + sect_len:
             # HACK: caller adds 16 bytes, remove these here
-            end -=16
+            end -= 16
         if end > sect_start + sect_len:
             sect_name = elffile._get_section_name(sect.header)
             raise Exception(
@@ -80,18 +83,22 @@ class DWVariable:
     def __repr__(self) -> str:
         return f"<DWVariable: {self.name} at {self.loc_expr} (with FB {self.frame_base})>"
 
+
 class ExprTraceInfo:
-    def __init__(self, expr: SAST, tp: list [TracePoint]):
+
+    def __init__(self, expr: SAST, tp: list[TracePoint]):
         self.expr = expr
         self.trace_points = tp
 
     def format(self):
         ret = f"; {self.expr.loc_range}\n"
-        ret += f"{self.expr.uuid}:" + ",".join((hex(t.addr) for t in self.trace_points)) + "\n"
+        ret += f"{self.expr.uuid}:" + ",".join(
+            (hex(t.addr) for t in self.trace_points)) + "\n"
         return ret
 
     def __str__(self):
         return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
+
 
 def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
     fname = dw_loc.fname
@@ -103,14 +110,17 @@ def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
             continue
         if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
             continue
-        if (line == expr.loc_range.begin.line and col < expr.loc_range.begin.col) or (
-                line == expr.loc_range.end.line and col > expr.loc_range.end.col):
+        if (line == expr.loc_range.begin.line
+                and col < expr.loc_range.begin.col) or (
+                    line == expr.loc_range.end.line
+                    and col > expr.loc_range.end.col):
             continue
         return expr
     return None
 
 
-def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc], start_idx: int) -> int:
+def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc],
+                            start_idx: int) -> int:
     last_line = expr.loc_range.end.line
     last_col = expr.loc_range.end.col
     ret: DwarfLoc = None
@@ -118,10 +128,14 @@ def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc], start_idx: int) ->
         loc = locs[idx]
         if loc.lp_state.line == last_line and loc.lp_state.column <= last_col:
             return loc
-    raise Exception("How it is possible that we found start for expression, but can't find an end?")
+    raise Exception(
+        "How it is possible that we found start for expression, but can't find an end?"
+    )
     return ret
 
+
 def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
+
     def _process_dies(die: DIE) -> list[DwarfInlinedFunc]:
         ret = []
         for child in die.iter_children():
@@ -132,28 +146,46 @@ def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
                 high_pc = child.attributes["DW_AT_high_pc"].value
                 if child.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
                     high_pc += low_pc - 4
-                ret.append(DwarfInlinedFunc(func_info.attributes["DW_AT_name"].value.decode(),die,low_pc, high_pc))
+                if not "DW_AT_name" in func_info.attributes:
+                    # Some internal compiller stuff?
+                    continue
+                ret.append(
+                    DwarfInlinedFunc(
+                        func_info.attributes["DW_AT_name"].value.decode(), die,
+                        low_pc, high_pc))
             if child.has_children:
                 ret.extend(_process_dies(child))
         return ret
+
     return _process_dies(cu.get_top_DIE())
 
+
 def _addr_inside_inline(inlines: list[DwarfInlinedFunc], addr: int) -> bool:
-    return any((inline.low_addr >= addr and inline.high_addr <= addr for inline in inlines))
+    return any((addr >= inline.low_addr and addr <= inline.high_addr
+                for inline in inlines))
+
 
 class ExprAddressData:
-    def __init__(self, expr: SAST, start_addr: int, end_addr: int, skip_list: list[(int, int)], loc_idx: int):
+
+    def __init__(self, expr: SAST, start_addr: int, end_addr: int,
+                 skip_list: list[(int, int)], loc_idx: int):
         self.expr = expr
         self.start_addr = start_addr
         self.end_addr = end_addr
         self.skip_list = skip_list
         self.loc_idx = loc_idx
+
     def __repr__(self) -> str:
         return f"<ExprData {hex(self.start_addr)}-{hex(self.end_addr)} for {self.expr} at {self.expr.loc_range}>"
 
-def _get_next_expr_for_processing(locs: list[DwarfLoc], expressions: list[SAST], inlines: list[DwarfInlinedFunc], start_idx) -> Optional[ExprAddressData]:
+
+def _get_next_expr_for_processing(locs: list[DwarfLoc],
+                                  expressions: list[SAST],
+                                  inlines: list[DwarfInlinedFunc],
+                                  start_idx) -> Optional[ExprAddressData]:
     found_expr: SAST = None
     start_loc: DwarfLoc = None
+
     for i in range(start_idx, len(locs)):
         loc = locs[i]
         # "compiler cannot attribute instruction to any source line" per Dwarf5 specification
@@ -167,6 +199,12 @@ def _get_next_expr_for_processing(locs: list[DwarfLoc], expressions: list[SAST],
             start_loc = loc
             continue
         if cur_expr != found_expr:
+            if _addr_inside_inline(inlines, loc.lp_state.address):
+                print(
+                    f"Found that {hex(loc.lp_state.address)} inside an inlined function"
+                )
+                # We are not done yet
+                continue
             # We have found the whole range for that expr: start_loc - prev_loc
             start_addr = start_loc.lp_state.address
             # Probably a hack, but somethimes dwarf data is a bit murky...
@@ -174,19 +212,32 @@ def _get_next_expr_for_processing(locs: list[DwarfLoc], expressions: list[SAST],
             return ExprAddressData(found_expr, start_addr, end_addr, [], i)
     return None
 
-def process_cu(cu, elffile, dwarfinfo, dis, expressions) -> list[TracePoint]:
-    dwarf_locs = parse_locs(dwarfinfo, cu)
+
+def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
+               expressions: list[SAS]) -> list[TracePoint]:
+    cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
+    if os.path.basename(cu_name) in ("unwind-dw2.c", "unwind-dw2-fde-dip.c",
+                                     "__aarch64_have_sme.c", "unwind-c.c"):
+        # Nothing good in libgcc internals
+        return []
+    print(f"Handling compile unit {cu_name}")
+    dwarf_locs = parse_locs(cu)
     ret: list[TracePoint] = []
     inlines = _collect_inlines(cu)
+    print("Inlines:")
+    pprint(inlines)
     idx = 0
-    while next_expr := _get_next_expr_for_processing(dwarf_locs, expressions, inlines, idx):
-        data = get_code_for_range(elffile, next_expr.start_addr, next_expr.end_addr)
-        print(f"Found next expr: {next_expr}" )
+    while next_expr := _get_next_expr_for_processing(dwarf_locs, expressions,
+                                                     inlines, idx):
+        data = get_code_for_range(elffile, next_expr.start_addr,
+                                  next_expr.end_addr)
+        print(f"Found next expr: {next_expr}")
         if not data:
-            raise Exception(f"Can't get data for expr {next_expr}" )
+            raise Exception(f"Can't get data for expr {next_expr}")
         ret.append(
             match_bool_expr(cu, elffile, next_expr.expr,
-                            list(dis.disasm(data, next_expr.start_addr))))
+                            list(dis.disasm(data, next_expr.start_addr)),
+                            inlines))
         idx = next_expr.loc_idx
 
     return ret
@@ -204,12 +255,13 @@ def process_elf(fname: str, expressions: list[SAST]):
     ret: list[ExprTraceInfo] = []
 
     for cu in dwarfinfo.iter_CUs():
-        ret.extend(process_cu(cu, elffile, dwarfinfo, dis, expressions))
+        ret.extend(process_cu(cu, elffile, dis, expressions))
 
     with open("plugin.conf", "wt") as out:
         out.write(f"; ELF name: {fname}\n")
         for eti in ret:
             out.write(eti.format())
+
 
 def _get_variable_loc(die: DIE, addr: int):
     # TODO: Cache this, maybe?
@@ -263,6 +315,7 @@ def get_variable_at_loc(cu: CompileUnit, addr: int, name: str):
 
     return best_match
 
+
 # TODO: Add some caching?
 def find_symbol(elf: ELFFile, name: str) -> Optional[int]:
     sym_table: SymbolTableSection = elf.get_section_by_name(".symtab")
@@ -276,12 +329,15 @@ def find_symbol(elf: ELFFile, name: str) -> Optional[int]:
         raise Exception(f"Found more that one symtab entry for {name}")
     return syms[0]
 
+
 def is_inlined_function(cu: CompileUnit, name: str) -> bool:
     for child in cu.iter_DIEs():
         if child.tag == "DW_TAG_subprogram":
-            if child.attributes["DW_AT_name"].value.decode() == name and "DW_AT_inline" in child.attributes:
+            if child.attributes["DW_AT_name"].value.decode(
+            ) == name and "DW_AT_inline" in child.attributes:
                 return True
     return False
+
 
 def get_variable_in_func(func_die: DIE,
                          addr: int,
@@ -475,7 +531,8 @@ class MatchState:
 
 
 def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
-                    instructions: list[capstone.CsInsn]):
+                    instructions: list[capstone.CsInsn],
+                    inlines: list[DwarfInlinedFunc]):
 
     def fuzzy_matcher(func):
 
@@ -514,15 +571,39 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         print(f"Fcall for {operand.fname}")
         if isinstance(operand.fname, NonBoolVar):
             if is_inlined_function(cu, operand.fname.name):
-                print(f"Okay, so {operand} is inlined. Great")
-                raise NotImplementedError()
+                # Find inline function and fast forwards to its end
+                fname = operand.fname.name
+                for inline in inlines:
+                    if inline.name == fname:
+                        # Finx idx for start address
+                        for idx in range(state.instr_idx, len(instructions)):
+                            if instructions[idx].address == inline.low_addr:
+                                break
+                        else:
+                            continue
+                        # Find idx for end address
+                        for idx in range(idx, len(instructions)):
+                            if instructions[idx].address == inline.high_addr:
+                                target_reg = get_instr_reg_operand(
+                                    instructions[idx], 0)
+                                print(
+                                    f"Inlined function ended at idx {idx} with write to reg {target_reg}"
+                                )
+                                return MatchState(idx + 1, target_reg, False)
+                        raise Exception(
+                            "End of inlined function is past expression range?"
+                        )
+                raise Exception(
+                    f"Could not find inlined function {fname} in list of inlines"
+                )
 
             # Try looking in in global symbol table
             sym = find_symbol(elf, operand.fname.name)
             func_addr = sym["st_value"]
             for idx in range(state.instr_idx, len(instructions)):
                 instr = instructions[idx]
-                if instr.mnemonic == "bl" and instr.operands[0].value.imm == func_addr:
+                if instr.mnemonic == "bl" and instr.operands[
+                        0].value.imm == func_addr:
                     return MatchState(idx + 1, "x0")
             else:
                 raise MatchError("Can't find function call")
@@ -530,7 +611,6 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         state = handle_operand(operand.fname, state)
         state.partial = True
         return state
-
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
@@ -552,15 +632,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                             case "DW_OP_reg29":
                                 target_reg = "x29"
                             case _:
-                                raise Exception(f"TODO: Match reg {v.frame_base}")
+                                raise Exception(
+                                    f"TODO: Match reg {v.frame_base}")
                         offset = v.loc_expr.args[0]
                         instr = instructions[state.instr_idx]
-                        match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                        match_instr_read_mem_operand(instr, 1, target_reg,
+                                                     offset)
                         print(f"  Found read at 0x{instr.address:x}")
-                        return MatchState(state.instr_idx + 1,
-                                      aarch64_reg_name(instr.operands[0].reg))
+                        return MatchState(
+                            state.instr_idx + 1,
+                            aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_addrx":
-                        abs_addr = cu.dwarfinfo.get_addr(cu, v.loc_expr.args[0])
+                        abs_addr = cu.dwarfinfo.get_addr(
+                            cu, v.loc_expr.args[0])
                         print(f"Global variable offset is {abs_addr:x}")
                         instr = instructions[state.instr_idx]
                         offset = get_adrp_addr(instr)
@@ -569,16 +653,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         print(f"remained is {rem} in {reg}")
                         instr = instructions[state.instr_idx + 1]
                         match_instr_read_mem_operand(instr, 1, reg, rem)
-                        return MatchState(state.instr_idx + 2,
-                                      aarch64_reg_name(instr.operands[0].reg))
+                        return MatchState(
+                            state.instr_idx + 2,
+                            aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_breg31":
                         target_reg = "sp"
                         offset = v.loc_expr.args[0]
                         instr = instructions[state.instr_idx]
-                        match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                        match_instr_read_mem_operand(instr, 1, target_reg,
+                                                     offset)
                         print(f"  Found read at 0x{instr.address:x}")
-                        return MatchState(state.instr_idx + 1,
-                                      aarch64_reg_name(instr.operands[0].reg))
+                        return MatchState(
+                            state.instr_idx + 1,
+                            aarch64_reg_name(instr.operands[0].reg))
                     case _:
                         raise Exception(f"Unknown var op {v.loc_expr.op_name}")
             case IntLiteral():
