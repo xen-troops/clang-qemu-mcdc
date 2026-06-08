@@ -115,6 +115,10 @@ def handle_file(fname: str, args: list[str]):
         args.remove("-save-temps")
     args.append("-Xclang")
     args.append("-ast-dump=json")
+    args.append("-fsyntax-only")
+    if "-o" in args:
+        pos = args.index("-o")
+        del args[pos:pos+1]
     print(args)
     result = subprocess.run(args, capture_output=True, check=True)
     data = json.loads(result.stdout, object_hook=object_hook)
