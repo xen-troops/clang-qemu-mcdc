@@ -70,7 +70,7 @@ def get_code_for_range(elffile: ELFFile, start, end):
             raise Exception(
                 f"Section {sect_name} holds beginning of range ({start:x}, {end:x})  but not end"
             )
-        return sect.data()[start - sect_start:end - sect_start]
+        return sect.data()[start - sect_start:end - sect_start + 4]
 
 
 class DWVariable:
@@ -100,13 +100,13 @@ class ExprTraceInfo:
         return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
 
 
-def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST]):
+def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST], ignored: SAST = None):
     fname = dw_loc.fname
     line = dw_loc.lp_state.line
     col = dw_loc.lp_state.column
 
     for expr in expr_list:
-        if expr.loc.file != fname:
+        if expr.loc.file != fname or expr == ignored:
             continue
         if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
             continue
@@ -123,15 +123,13 @@ def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc],
                             start_idx: int) -> int:
     last_line = expr.loc_range.end.line
     last_col = expr.loc_range.end.col
-    ret: DwarfLoc = None
-    for idx in range(start_idx, len(locs)):
+    for idx in range(start_idx - 1, len(locs)):
         loc = locs[idx]
-        if loc.lp_state.line == last_line and loc.lp_state.column <= last_col:
-            return loc
+        if (loc.lp_state.line == last_line and loc.lp_state.column >= last_col) or loc.lp_state.line >= last_line:
+            return idx
     raise Exception(
         "How it is possible that we found start for expression, but can't find an end?"
     )
-    return ret
 
 
 def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
@@ -178,43 +176,66 @@ class ExprAddressData:
     def __repr__(self) -> str:
         return f"<ExprData {hex(self.start_addr)}-{hex(self.end_addr)} for {self.expr} at {self.expr.loc_range}>"
 
-
 def _get_next_expr_for_processing(locs: list[DwarfLoc],
                                   expressions: list[SAST],
                                   inlines: list[DwarfInlinedFunc],
-                                  start_idx) -> Optional[ExprAddressData]:
+                                  ignore_expr: SAST = [], level = 0) -> Optional[ExprAddressData]:
     found_expr: SAST = None
-    start_loc: DwarfLoc = None
+    final_loc_idx: int = 0
+    for i, loc in enumerate(locs):
+        # If we know last location for expr - skip to it
+        if i < final_loc_idx:
+            continue
 
-    for i in range(start_idx, len(locs)):
-        loc = locs[i]
         # "compiler cannot attribute instruction to any source line" per Dwarf5 specification
         if loc.lp_state.line == 0:
             continue
-        cur_expr = _find_expr_for_loc(loc, expressions)
+
+        # "The value 0 is reserved to indicate that a statement begins at the “left edge” of the line" per Dwarf5 specification
+        # The irony is that clang injects it inside expression sometimes
+        if loc.lp_state.column == 0:
+            continue
+
+        cur_expr = _find_expr_for_loc(loc, expressions, ignore_expr)
+
         if not cur_expr and not found_expr:
             continue
         if not found_expr:
             found_expr = cur_expr
-            start_loc = loc
+            start_loc_idx = i
             continue
-        if cur_expr != found_expr:
+        if cur_expr != found_expr or i == (len(locs) - 1):
             if _addr_inside_inline(inlines, loc.lp_state.address):
-                print(
-                    f"Found that {hex(loc.lp_state.address)} inside an inlined function"
-                )
                 # We are not done yet
                 continue
-            # We have found the whole range for that expr: start_loc - prev_loc
-            start_addr = start_loc.lp_state.address
+            final_loc_idx = _find_last_loc_for_expr(found_expr, locs, i)
+
+            # Fixup for inlines
+            if final_loc_idx < i - 1:
+                final_loc_idx = i - 1
+
+            # We have found the whole range for that expr
+            start_addr = locs[start_loc_idx].lp_state.address
+
             # Probably a hack, but somethimes dwarf data is a bit murky...
-            end_addr = loc.lp_state.address + 16
-            return ExprAddressData(found_expr, start_addr, end_addr, [], i)
-    return None
+            end_addr = locs[final_loc_idx].lp_state.address + 16
+
+            # Return outer expr and then try....
+            yield ExprAddressData(found_expr, start_addr, end_addr, [], i)
+
+            # ... end then try to find inner ones
+            # (TODO: Maybe we want to change order other way around?)
+            for ead in _get_next_expr_for_processing(locs[start_loc_idx:final_loc_idx], expressions, inlines, found_expr):
+                yield ead
+
+            # Reset state
+            found_expr = cur_expr
+            start_loc_idx = i
+    return
 
 
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
-               expressions: list[SAS]) -> list[TracePoint]:
+               expressions: list[SAST]) -> list[TracePoint]:
     cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
     if os.path.basename(cu_name) in ("unwind-dw2.c", "unwind-dw2-fde-dip.c",
                                      "__aarch64_have_sme.c", "unwind-c.c"):
@@ -226,9 +247,8 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     inlines = _collect_inlines(cu)
     print("Inlines:")
     pprint(inlines)
-    idx = 0
-    while next_expr := _get_next_expr_for_processing(dwarf_locs, expressions,
-                                                     inlines, idx):
+    for next_expr in _get_next_expr_for_processing(dwarf_locs, expressions,
+                                                     inlines):
         data = get_code_for_range(elffile, next_expr.start_addr,
                                   next_expr.end_addr)
         print(f"Found next expr: {next_expr}")
@@ -238,7 +258,6 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
             match_bool_expr(cu, elffile, next_expr.expr,
                             list(dis.disasm(data, next_expr.start_addr)),
                             inlines))
-        idx = next_expr.loc_idx
 
     return ret
 
@@ -419,6 +438,10 @@ def get_adrp_addr(instr: capstone.CsInsn) -> int:
             f"Tried to get adrp offset for '{instr.mnemonic}' instruction")
     return instr.operands[1].value.imm
 
+def match_instr_get_operand(instr: capstone.CsInsn, idx: int, name: str):
+    actual_reg = get_instr_reg_operand(instr, idx)
+    if actual_reg  != name:
+        raise MatchError(f"Expected reg {name} at position {idx} but found {actual_reg} for instruction {instr.mnemonic}")
 
 def match_instr_const_operand(instr: capstone.CsInsn, idx: int, value: int):
     if idx >= len(instr.operands):
@@ -530,6 +553,13 @@ class MatchState:
         return f"<MatchState(at={self.instr_idx} partial={self.partial} target_reg={self.target_reg})>"
 
 
+def reg_cmp(r1: str, r2: str):
+    if r1.startswith("x") or r1.startswith("w"):
+        r1 = r1[1:]
+    if r2.startswith("x") or r2.startswith("w"):
+        r2 = r2[1:]
+    return r1 == r2
+
 def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     instructions: list[capstone.CsInsn],
                     inlines: list[DwarfInlinedFunc]):
@@ -553,6 +583,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         return result
 
     def match_optional_store(state: MatchState) -> MatchState:
+        if state.instr_idx >= len(instructions) - 1:
+            return state
         if instructions[state.instr_idx].mnemonic == "mov" and instructions[
                 state.instr_idx + 1].mnemonic == "str":
             state.instr_idx += 2
@@ -560,43 +592,40 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     def match_optional_bool_cast(state: MatchState) -> MatchState:
         instr = instructions[state.instr_idx]
-        if instr.mnemonic == "and" and get_instr_reg_operand(
-                instr, 0) == state.target_reg:
+        if instr.mnemonic == "and" and reg_cmp(get_instr_reg_operand(instr, 1),state.target_reg):
             state.instr_idx += 1
+            state.target_reg = get_instr_reg_operand(instr, 0)
         return state
 
     ret: list[TracePoint] = []
 
+    def _handle_inlined_fcall(operand: SAST, state: MatchState):
+        # Find inline function and fast forwards to its end
+        fname = operand.fname.name
+        for inline in inlines:
+            if inline.name == fname:
+                # Find idx for start address
+                for idx in range(state.instr_idx, len(instructions)):
+                    if instructions[idx].address == inline.low_addr:
+                        break
+                    else:
+                        continue
+                    # Find idx for end address
+                for idx in range(idx, len(instructions)):
+                    if instructions[idx].address == inline.high_addr:
+                        target_reg = get_instr_reg_operand(
+                            instructions[idx], 0)
+                        return MatchState(idx + 1, target_reg, False)
+                raise Exception(
+                    "End of inlined function is past expression range?")
+        raise Exception(
+            f"Could not find inlined function {fname} new {hex(instructions[state.instr_idx].address)} in list of inlines"
+        )
+
     def handle_fcall(operand: SAST, state: MatchState):
-        print(f"Fcall for {operand.fname}")
         if isinstance(operand.fname, NonBoolVar):
             if is_inlined_function(cu, operand.fname.name):
-                # Find inline function and fast forwards to its end
-                fname = operand.fname.name
-                for inline in inlines:
-                    if inline.name == fname:
-                        # Finx idx for start address
-                        for idx in range(state.instr_idx, len(instructions)):
-                            if instructions[idx].address == inline.low_addr:
-                                break
-                        else:
-                            continue
-                        # Find idx for end address
-                        for idx in range(idx, len(instructions)):
-                            if instructions[idx].address == inline.high_addr:
-                                target_reg = get_instr_reg_operand(
-                                    instructions[idx], 0)
-                                print(
-                                    f"Inlined function ended at idx {idx} with write to reg {target_reg}"
-                                )
-                                return MatchState(idx + 1, target_reg, False)
-                        raise Exception(
-                            "End of inlined function is past expression range?"
-                        )
-                raise Exception(
-                    f"Could not find inlined function {fname} in list of inlines"
-                )
-
+                return _handle_inlined_fcall(operand, state)
             # Try looking in in global symbol table
             sym = find_symbol(elf, operand.fname.name)
             func_addr = sym["st_value"]
@@ -672,6 +701,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 print(
                     f"Handling int const '{operand.value}' for reg {state.target_reg}"
                 )
+                if operand.value == 0:
+                    # Clang can generate cbnz in that case
+                    if instructions[state.instr_idx].mnemonic == "cbnz":
+                        # Let caller handle that case
+                        return state
                 match_sub_instr(instructions[state.instr_idx],
                                 state.target_reg, operand.value)
                 return MatchState(state.instr_idx + 1, state.target_reg)
@@ -704,22 +738,40 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case BoolExpression.OP_EQ:
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
+                new_state = match_optional_bool_cast(new_state)
                 new_state = handle_operand(e.b, new_state)
                 idx = new_state.instr_idx
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
                     idx += 1
-                if instructions[idx].mnemonic == "cset":
-                    pass
-                elif instructions[idx].mnemonic == "b.eq":
-                    match_branch_isntr(instructions[idx], "b.eq")
-                    match_branch_isntr(instructions[idx + 1], "b")
-                else:
-                    match_branch_isntr(instructions[idx], "b.ne")
-                    match_branch_isntr(instructions[idx + 1], "b")
-                ret.append(
-                    TracePoint(instructions[idx].address, "'EQ FLAG(TODO)'",
-                               e))
+                match instructions[idx].mnemonic:
+                    case "b.eq":
+                        match_branch_isntr(instructions[idx], "b.eq")
+                        match_branch_isntr(instructions[idx + 1], "b")
+                        ret.append(
+                            TracePoint(instructions[idx].address, "'EQ FLAG(TODO)'",
+                                    e))
+                    case "b.ne":
+                        match_branch_isntr(instructions[idx], "b.ne")
+                        match_branch_isntr(instructions[idx + 1], "b")
+                        ret.append(
+                            TracePoint(instructions[idx].address, "'NOT EQ FLAG(TODO)'",
+                                       e))
+                    case "cbnz":
+                        match_branch_isntr(instructions[idx], "cbnz")
+                        match_instr_reg_operand(instructions[idx], 0, state.target_reg)
+                        match_branch_isntr(instructions[idx + 1], "b")
+                        ret.append(
+                            TracePoint(instructions[idx].address, "'NOT EQ FLAG(TODO)'",
+                                       e))
+                    case "cset":
+                        ret.append(
+                            TracePoint(instructions[idx].address, f"CSET: {get_instr_reg_operand(instructions[idx], 0)}",
+                                       e))
+                        return MatchState(idx + 1)
+                    case _:
+                        raise MatchError(f"Expected for conditional branch, found {instructions[idx].mnemonic}")
+
                 return MatchState(idx + 2)
             case BoolExpression.OP_XOR:
                 op1_state = handle_operand(e.a, state)
@@ -825,25 +877,37 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = handle_operand(e.a, state)
                 return new_state
             case BoolExpression.OP_LT:
-                new_state = handle_operand(e.a, state)
-                new_state = match_optional_store(new_state)
-                new_state = handle_operand(e.b, new_state)
-                if instructions[new_state.instr_idx].mnemonic == "b.lt":
-                    match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                       "b")
-                    ret.append(
-                        TracePoint(instructions[new_state.instr_idx].address,
-                                   "'LT FLAG(TODO)'", e))
-                elif instructions[new_state.instr_idx].mnemonic == "b.ge":
-                    match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                       "b")
-                    ret.append(
-                        TracePoint(instructions[new_state.instr_idx].address,
-                                   "'GE FLAG INVERSE(TODO)'", e))
-                else:
-                    raise MatchError(
-                        f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
-                    )
+                op1_state = handle_operand(e.a, state)
+                op1_state = match_optional_store(op1_state)
+                op2_state = handle_operand(e.b, op1_state)
+                new_state = op2_state
+                if not isinstance(e.b, IntLiteral):
+                    # We need subs op if it is not handled by IntLiteral() handler
+                    match_sub_instr_regs(instructions[new_state.instr_idx], op1_state.target_reg, op2_state.target_reg)
+                    new_state.instr_idx +=1
+
+                match instructions[new_state.instr_idx].mnemonic:
+                    case "b.lt":
+                        match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                           "b")
+                        ret.append(
+                            TracePoint(instructions[new_state.instr_idx].address,
+                                       "'LT FLAG(TODO)'", e))
+                    case "b.ge":
+                        match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                           "b")
+                        ret.append(
+                            TracePoint(instructions[new_state.instr_idx].address,
+                                       "'GE FLAG INVERSE(TODO)'", e))
+                    case "cset":
+                        instr = instructions[new_state.instr_idx]
+                        ret.append(
+                            TracePoint(instr.address, f"CSET: {get_instr_reg_operand(instr, 0)}", e))
+                        return MatchState(new_state.instr_idx + 1)
+                    case _:
+                        raise MatchError(
+                            f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
+                        )
                 return MatchState(new_state.instr_idx + 2)
             case BoolExpression.OP_GT:
                 new_state = handle_operand(e.a, state)
