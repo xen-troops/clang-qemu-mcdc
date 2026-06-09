@@ -4,7 +4,7 @@ import subprocess
 import pickle
 
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ConditionalOp, ArraySubscript
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr
 
 
 def filter_same_expr(expressions: list[SAST]):
@@ -140,6 +140,10 @@ def deep_dive(ast: ASTEntry) -> list[SAST]:
             "CompoundAssignOperator",
             "BinaryOperator",
             "ParenExpr",
+            "ForStmt",
+            "WhileStmt",
+            "DoStmt",
+            "IfStmt"
     ]:
         r = handle_expression(ast)
         ret.extend(r)
@@ -274,11 +278,6 @@ def handle_expression(ast: ASTEntry) -> SAST:
                 return handle_unary_expr(ast)
             case "CallExpr":
                 return handle_call(ast)
-            case "ConditionalOperator":
-                check = recurse(ast.inner[0])
-                expr1 = recurse(ast.inner[1])
-                expr2 = recurse(ast.inner[2])
-                return ConditionalOp(ast.get_loc(), check, expr1, expr2, ast)
             case "CStyleCastExpr":
                 # TODO: Do something with casts to bool
                 t = ast.data["type"]["qualType"]
@@ -286,12 +285,27 @@ def handle_expression(ast: ASTEntry) -> SAST:
             case "ArraySubscriptExpr":
                 return ArraySubscript(ast.get_loc(), recurse(ast.inner[0]),
                                    recurse(ast.inner[1]), ast)
+            case "IfStmt" | "WhileStmt" | "ConditionalOperator" | "BinaryConditionalOperator":
+                rest = [recurse(inner) for inner in ast.inner[1:]]
+                return FlowControlStructure(ast.get_loc, recurse(ast.inner[0]), rest, ast)
+            case "DoStmt":
+                rest = [recurse(inner) for inner in ast.inner[0:-1]]
+                return FlowControlStructure(ast.get_loc, recurse(ast.inner[-1]), rest, ast)
+            case "ForStmt":
+                rest = []
+                for idx, item in enumerate(ast.inner):
+                    if idx != 2 and item:
+                        rest.append(recurse(item))
+                return FlowControlStructure(ast.get_loc, recurse(ast.inner[2]), rest, ast)
 #TODO
             case "StmtExpr":
                 raise Nope()
 #TODO
             case "ConstantExpr":
                 raise Nope()
+
+            case "CompoundStmt" | "ReturnStmt":
+                return MiscExpr(ast.loc, ast, [recurse(inner) for inner in ast.inner])
 #TODO
             case "CompoundLiteralExpr":
                 raise Nope()
@@ -311,12 +325,8 @@ def handle_expression(ast: ASTEntry) -> SAST:
             case "VAArgExpr":
                 raise Nope()
 
-
-#TODO: Check this for correct inner[] use
-            case "BinaryConditionalOperator":
-                check = recurse(ast.inner[0])
-                expr2 = recurse(ast.inner[2])
-                return ConditionalOp(ast.get_loc(), check, check, expr2, ast)
+            case "NULL":
+                return NullOp(ast.loc, ast)
             case _:
                 pprint(ast)
                 pprint(ast.data)
@@ -327,7 +337,7 @@ def handle_expression(ast: ASTEntry) -> SAST:
         expr = recurse(ast)
     except Nope:
         print(f"Got Nope exception for {ast.get_loc()}")
-        return None
+        return []
 
     print(expr)
     return expr.get_topmost_bool_expr()

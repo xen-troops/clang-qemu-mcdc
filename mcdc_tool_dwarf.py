@@ -10,7 +10,7 @@ from elftools.dwarf.die import DIE
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ConditionalOp, ArraySubscript
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript
 import pickle
 import sys
 from typing import Optional
@@ -100,7 +100,9 @@ class ExprTraceInfo:
         return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
 
 
-def _find_expr_for_loc(dw_loc: DwarfLoc, expr_list: list[SAST], ignored: SAST = None):
+def _find_expr_for_loc(dw_loc: DwarfLoc,
+                       expr_list: list[SAST],
+                       ignored: SAST = None):
     fname = dw_loc.fname
     line = dw_loc.lp_state.line
     col = dw_loc.lp_state.column
@@ -125,7 +127,8 @@ def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc],
     last_col = expr.loc_range.end.col
     for idx in range(start_idx - 1, len(locs)):
         loc = locs[idx]
-        if (loc.lp_state.line == last_line and loc.lp_state.column >= last_col) or loc.lp_state.line >= last_line:
+        if (loc.lp_state.line == last_line and loc.lp_state.column
+                >= last_col) or loc.lp_state.line >= last_line:
             return idx
     raise Exception(
         "How it is possible that we found start for expression, but can't find an end?"
@@ -176,10 +179,12 @@ class ExprAddressData:
     def __repr__(self) -> str:
         return f"<ExprData {hex(self.start_addr)}-{hex(self.end_addr)} for {self.expr} at {self.expr.loc_range}>"
 
+
 def _get_next_expr_for_processing(locs: list[DwarfLoc],
                                   expressions: list[SAST],
                                   inlines: list[DwarfInlinedFunc],
-                                  ignore_expr: SAST = [], level = 0) -> Optional[ExprAddressData]:
+                                  ignore_expr: SAST = [],
+                                  level=0) -> Optional[ExprAddressData]:
     found_expr: SAST = None
     final_loc_idx: int = 0
     for i, loc in enumerate(locs):
@@ -225,7 +230,9 @@ def _get_next_expr_for_processing(locs: list[DwarfLoc],
 
             # ... end then try to find inner ones
             # (TODO: Maybe we want to change order other way around?)
-            for ead in _get_next_expr_for_processing(locs[start_loc_idx:final_loc_idx], expressions, inlines, found_expr):
+            for ead in _get_next_expr_for_processing(
+                    locs[start_loc_idx:final_loc_idx], expressions, inlines,
+                    found_expr):
                 yield ead
 
             # Reset state
@@ -248,7 +255,7 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     print("Inlines:")
     pprint(inlines)
     for next_expr in _get_next_expr_for_processing(dwarf_locs, expressions,
-                                                     inlines):
+                                                   inlines):
         data = get_code_for_range(elffile, next_expr.start_addr,
                                   next_expr.end_addr)
         print(f"Found next expr: {next_expr}")
@@ -438,10 +445,14 @@ def get_adrp_addr(instr: capstone.CsInsn) -> int:
             f"Tried to get adrp offset for '{instr.mnemonic}' instruction")
     return instr.operands[1].value.imm
 
+
 def match_instr_get_operand(instr: capstone.CsInsn, idx: int, name: str):
     actual_reg = get_instr_reg_operand(instr, idx)
-    if actual_reg  != name:
-        raise MatchError(f"Expected reg {name} at position {idx} but found {actual_reg} for instruction {instr.mnemonic}")
+    if actual_reg != name:
+        raise MatchError(
+            f"Expected reg {name} at position {idx} but found {actual_reg} for instruction {instr.mnemonic}"
+        )
+
 
 def match_instr_const_operand(instr: capstone.CsInsn, idx: int, value: int):
     if idx >= len(instr.operands):
@@ -560,6 +571,7 @@ def reg_cmp(r1: str, r2: str):
         r2 = r2[1:]
     return r1 == r2
 
+
 def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     instructions: list[capstone.CsInsn],
                     inlines: list[DwarfInlinedFunc]):
@@ -592,7 +604,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     def match_optional_bool_cast(state: MatchState) -> MatchState:
         instr = instructions[state.instr_idx]
-        if instr.mnemonic == "and" and reg_cmp(get_instr_reg_operand(instr, 1),state.target_reg):
+        if instr.mnemonic == "and" and reg_cmp(get_instr_reg_operand(instr, 1),
+                                               state.target_reg):
             state.instr_idx += 1
             state.target_reg = get_instr_reg_operand(instr, 0)
         return state
@@ -794,28 +807,33 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_branch_isntr(instructions[idx], "b.eq")
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address, "'EQ FLAG(TODO)'",
-                                    e))
+                            TracePoint(instructions[idx].address,
+                                       "'EQ FLAG(TODO)'", e))
                     case "b.ne":
                         match_branch_isntr(instructions[idx], "b.ne")
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address, "'NOT EQ FLAG(TODO)'",
-                                       e))
+                            TracePoint(instructions[idx].address,
+                                       "'NOT EQ FLAG(TODO)'", e))
                     case "cbnz":
                         match_branch_isntr(instructions[idx], "cbnz")
-                        match_instr_reg_operand(instructions[idx], 0, state.target_reg)
+                        match_instr_reg_operand(instructions[idx], 0,
+                                                state.target_reg)
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address, "'NOT EQ FLAG(TODO)'",
-                                       e))
+                            TracePoint(instructions[idx].address,
+                                       "'NOT EQ FLAG(TODO)'", e))
                     case "cset":
                         ret.append(
-                            TracePoint(instructions[idx].address, f"CSET: {get_instr_reg_operand(instructions[idx], 0)}",
-                                       e))
+                            TracePoint(
+                                instructions[idx].address,
+                                f"CSET: {get_instr_reg_operand(instructions[idx], 0)}",
+                                e))
                         return MatchState(idx + 1)
                     case _:
-                        raise MatchError(f"Expected for conditional branch, found {instructions[idx].mnemonic}")
+                        raise MatchError(
+                            f"Expected for conditional branch, found {instructions[idx].mnemonic}"
+                        )
 
                 return MatchState(idx + 2)
             case BoolExpression.OP_XOR:
@@ -925,6 +943,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return handle_lt_gt_op(e, state)
             case BoolExpression.OP_GT:
                 return handle_lt_gt_op(e, state)
+            case BoolExpression.OP_IMPLICIT_CAST:
+                raise NotImplementedError("TODO: Handle implicit bool cast")
             case _:
                 raise Exception(f"Don't know what to do with {e} ({e.op})")
 

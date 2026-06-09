@@ -196,11 +196,14 @@ class SAST:
 
     def get_leafs(self) -> list[BoolExpression]:
         "Returns list of leaf boolean expressions or `conditions` in MC/DC lingo"
-        return list(itertools.chain.from_iterable(ch.get_leafs() for ch in self.inner))
+        return list(
+            itertools.chain.from_iterable(ch.get_leafs() for ch in self.inner))
 
     def get_decisions(self) -> list[BoolExpression]:
         "Returns list of top-most boolean expressions or `decisions` in MC/DC lingo"
-        return list(itertools.chain.from_iterable(ch.get_decisions() for ch in self.inner))
+        return list(
+            itertools.chain.from_iterable(ch.get_decisions()
+                                          for ch in self.inner))
 
     def lift_fcall_args(self) -> list[SAST]:
         """
@@ -209,7 +212,9 @@ class SAST:
 
         N.B. This will change structure of the inner tree
         """
-        return list(itertools.chain.from_iterable(ch.lift_fcall_args() for ch in self.inner))
+        return list(
+            itertools.chain.from_iterable(ch.lift_fcall_args()
+                                          for ch in self.inner))
 
     def is_const(self) -> bool:
         return self._is_const
@@ -304,6 +309,7 @@ class BoolExpression(SAST):
     OP_LE = 7
     OP_GT = 8
     OP_GE = 9
+    OP_IMPLICIT_CAST = 10
 
     OP_REPR = {
         OP_OR: "OR",
@@ -315,6 +321,7 @@ class BoolExpression(SAST):
         OP_LE: "LE",
         OP_GT: "GT",
         OP_GE: "GE",
+        OP_IMPLICIT_CAST: "(IMPLICIT BOOL CAST)",
     }
     OP_C_REPR = {
         OP_OR: "||",
@@ -326,6 +333,7 @@ class BoolExpression(SAST):
         OP_LE: "<=",
         OP_GT: ">",
         OP_GE: ">=",
+        OP_IMPLICIT_CAST: "(bool)",
     }
 
     def __init__(self,
@@ -522,6 +530,7 @@ class FCall(SAST):
             self.inner[idx + 1] = FCallArg(arg.loc, arg.ast)
         return ret
 
+
 class FCallArg(SAST):
     """Placeholder for functinal call argument, as we in fact are not interested in its value"""
 
@@ -531,32 +540,32 @@ class FCallArg(SAST):
     def __repr__(self) -> str:
         return f"<FCallArg at {self.loc}>"
 
-class ConditionalOp(SAST):
 
-    def __init__(self, loc: CodeLoc, check: SAST, expr1: SAST, expr2: SAST,
+class FlowControlStructure(SAST):
+    """Control structure which has some sort of "check" which makes implicit bool cast """
+
+    def __init__(self, loc: CodeLoc, check: SAST, rest: list[SAST],
                  ast: ASTEntry):
-        self._derived_init_(loc, ast, [check, expr1, expr2])
-        self.loc = loc
+        # We don't know what it is, but we need to wrap this into
+        # BoolExpression just in case
+        if isinstance(check, BoolExpression):
+            bool_check = check
+        else:
+            bool_check = BoolExpression(check.loc, ast, check,
+                                        BoolExpression.OP_IMPLICIT_CAST)
+
+        self._derived_init_(loc, ast, [bool_check] + rest)
 
     @property
     def check(self):
         return self.inner[0]
 
     @property
-    def expr1(self):
-        return self.inner[1]
-
-    @property
-    def expr2(self):
-        return self.inner[2]
+    def rest(self):
+        return self.inner[1:]
 
     def __repr__(self) -> str:
-        return f"(<cond-op>{self.check})?({self.expr1}):({self.expr2})"
-
-    def get_leafs(self) -> list[SAST]:
-        #TODO: Fix this failing assert
-        #        assert len(ret) > 0
-        return super().get_leafs()
+        return f"(<FlowControStructure>{self.check})({self.rest})"
 
 
 class ArraySubscript(SAST):
@@ -600,3 +609,24 @@ class CCast(SAST):
     @property
     def casted(self):
         return self.inner[0]
+
+
+class NullOp(SAST):
+    "For cases when we really not interested in expression"
+
+    def __init__(self, loc: CodeLoc, ast: ASTEntry):
+        self._derived_init_(loc, ast, [])
+
+    def __repr__(self) -> str:
+        return f"(NullOp at {self.loc})"
+
+
+class MiscExpr(SAST):
+    """Some other type of expression, in which we are not interested in. Should never
+    be argument for BoolExpression"""
+
+    def __init__(self, loc: CodeLoc, ast: ASTEntry, expressions: list[SAST]):
+        self._derived_init_(loc, ast, expressions)
+
+    def __repr__(self) -> str:
+        return f"(MiscExpr:{self.inner})"
