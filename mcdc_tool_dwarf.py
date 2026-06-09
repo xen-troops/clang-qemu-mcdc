@@ -422,7 +422,7 @@ def match_instr_reg_operand(instr: capstone.CsInsn, idx: int, reg: str):
     if instr.operands[idx].type != capstone.arm64_const.ARM64_OP_REG:
         raise MatchError(
             f"{idx}'th operand is not a register: {instr.operands[idx].type}")
-    if aarch64_reg_name(instr.operands[idx].reg)[1:] != reg[1:]:
+    if not reg_cmp(aarch64_reg_name(instr.operands[idx].reg), reg):
         raise MatchError(
             f"{idx}'th register is not one that we expect: {aarch64_reg_name(instr.operands[idx].reg)} != {reg}"
         )
@@ -719,6 +719,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     if instructions[state.instr_idx].mnemonic == "cbnz":
                         # Let caller handle that case
                         return state
+                    if instructions[state.instr_idx].mnemonic == "cbz":
+                        # Let caller handle that case
+                        return state
                 match_sub_instr(instructions[state.instr_idx],
                                 state.target_reg, operand.value)
                 return MatchState(state.instr_idx + 1, state.target_reg)
@@ -818,11 +821,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     case "cbnz":
                         match_branch_isntr(instructions[idx], "cbnz")
                         match_instr_reg_operand(instructions[idx], 0,
-                                                state.target_reg)
+                                                new_state.target_reg)
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
                             TracePoint(instructions[idx].address,
                                        "'NOT EQ FLAG(TODO)'", e))
+                    case "cbz":
+                        match_branch_isntr(instructions[idx], "cbz")
+                        match_instr_reg_operand(instructions[idx], 0,
+                                                new_state.target_reg)
+                        match_branch_isntr(instructions[idx + 1], "b")
+                        ret.append(
+                            TracePoint(instructions[idx].address,
+                                       "'EQ FLAG(TODO)'", e))
                     case "cset":
                         ret.append(
                             TracePoint(
@@ -946,7 +957,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case BoolExpression.OP_IMPLICIT_CAST:
                 new_state = handle_operand(e.a, state)
                 match instructions[new_state.instr_idx].mnemonic:
-                    case "tbz":
+                    case "tbz" | "cbz" | "cbnz":
                         ret.append(TracePoint(instructions[new_state.instr_idx].address, "TODO", e))
                         new_state.instr_idx +=1
                         return new_state
