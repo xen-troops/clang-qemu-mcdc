@@ -308,6 +308,9 @@ def process_elf(fname: str, expressions: list[SAST]):
         for eti in ret:
             out.write(eti.format())
 
+    with open("mcdc-dwarf.pickle", "wb") as fp:
+        pickle.dump(ret, fp)
+
 
 def _get_variable_loc(die: DIE, addr: int):
     # TODO: Cache this, maybe?
@@ -561,13 +564,13 @@ def match_sub_instr_regs(instr: capstone.CsInsn, reg1, reg2):
 
 class TracePoint:
 
-    def __init__(self, addr: int, check_for: str, bool_expr: BoolExpression):
+    def __init__(self, addr: int, inverted: bool, bool_expr: BoolExpression):
         self.addr = addr
-        self.check_for = check_for
+        self.inverted = inverted
         self.bool_expr = bool_expr
 
     def __repr__(self) -> str:
-        return f"<TracePoint( 0x{self.addr:06x} ?{self.check_for} for {self.bool_expr} )>"
+        return f"<TracePoint( 0x{self.addr:06x} : {self.bool_expr} (inverted: {self.inverted}) )>"
 
 
 class MatchState:
@@ -772,6 +775,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         op1_state = match_optional_store(op1_state)
         op2_state = handle_operand(e.b, op1_state)
         new_state = op2_state
+
+        op_is_gt_ge = (e.op == BoolExpression.OP_GT or e.op == BoolExpression.OP_GE)
+
         if not isinstance(e.b, IntLiteral):
             # We need subs op if it is not handled by IntLiteral() handler
             match_sub_instr_regs(instructions[new_state.instr_idx],
@@ -780,30 +786,35 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
         match instructions[new_state.instr_idx].mnemonic:
             case "b.lt":
+                inverted = op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
-                               "(TODO)'", e))
+                               inverted, e))
             case "b.le":
+                inverted = op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
-                               "(TODO)'", e))
+                               inverted, e))
             case "b.gt":
+                inverted = not op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
-                               "(TODO)'", e))
+                               inverted, e))
             case "b.ge":
+                inverted = not op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
-                               "(TODO)'", e))
+                               inverted, e))
             case "cset":
+                # TBD: Match cset condition flags
                 instr = instructions[new_state.instr_idx]
                 ret.append(
                     TracePoint(instr.address,
-                               f"CSET: {get_instr_reg_operand(instr, 0)}", e))
+                               False, e))
                 return MatchState(new_state.instr_idx + 1)
             case _:
                 raise MatchError(
@@ -831,13 +842,13 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
                             TracePoint(instructions[idx].address,
-                                       "'EQ FLAG(TODO)'", e))
+                                       False, e))
                     case "b.ne":
                         match_branch_isntr(instructions[idx], "b.ne")
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
                             TracePoint(instructions[idx].address,
-                                       "'NOT EQ FLAG(TODO)'", e))
+                                       True, e))
                     case "cbnz":
                         match_branch_isntr(instructions[idx], "cbnz")
                         match_instr_reg_operand(instructions[idx], 0,
@@ -845,7 +856,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
                             TracePoint(instructions[idx].address,
-                                       "'NOT EQ FLAG(TODO)'", e))
+                                       True, e))
                     case "cbz":
                         match_branch_isntr(instructions[idx], "cbz")
                         match_instr_reg_operand(instructions[idx], 0,
@@ -853,12 +864,13 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
                             TracePoint(instructions[idx].address,
-                                       "'EQ FLAG(TODO)'", e))
+                                       False, e))
                     case "cset":
+                        # TBD: Match cset condition flags
                         ret.append(
                             TracePoint(
                                 instructions[idx].address,
-                                f"CSET: {get_instr_reg_operand(instructions[idx], 0)}",
+                                False,
                                 e))
                         return MatchState(idx + 1)
                     case _:
@@ -877,6 +889,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                      op2_state.target_reg)
                 new_state = MatchState(op2_state.instr_idx + 1,
                                        get_instr_reg_operand(instr, 0))
+                inverted = False
                 idx = new_state.instr_idx
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
@@ -884,31 +897,33 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 if instructions[idx].mnemonic == "cset":
                     pass
                 elif instructions[idx].mnemonic == "b.eq":
+                    inverted = True
                     match_branch_isntr(instructions[idx], "b.eq")
                     match_branch_isntr(instructions[idx + 1], "b")
                 else:
                     match_branch_isntr(instructions[idx], "b.ne")
                     match_branch_isntr(instructions[idx + 1], "b")
                 ret.append(
-                    TracePoint(instructions[idx].address, "'EQ FLAG(TODO)'",
+                    TracePoint(instructions[idx].address, inverted,
                                e))
                 return MatchState(idx + 2)
             case BoolExpression.OP_OR:
                 new_state = handle_operand(e.a, state)
                 new_state = match_optional_store(new_state)
+                inverted = False
                 if instructions[new_state.instr_idx].mnemonic == "tbnz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1],
                                        "b")
                     ret.append(
                         TracePoint(instructions[new_state.instr_idx].address,
-                                   "'NOT ZERO FLAG (TODO)'", e.a))
+                                   False, e.a))
                     new_state.instr_idx += 2
                 elif instructions[new_state.instr_idx].mnemonic == "tbz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1],
                                        "b")
                     ret.append(
                         TracePoint(instructions[new_state.instr_idx].address,
-                                   "'ZERO FLAG (TODO)'", e.a))
+                                   True, e.a))
                     new_state.instr_idx += 2
                 new_state = handle_operand(e.b, new_state)
                 if isinstance(e.b, BoolVar):
@@ -918,7 +933,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         ret.append(
                             TracePoint(
                                 instructions[new_state.instr_idx].address,
-                                "'ZERO FLAG (TODO)'", e.b))
+                                True, e.b))
                         new_state.instr_idx += 2
                     elif instructions[new_state.instr_idx].mnemonic == "tbnz":
                         match_branch_isntr(
@@ -926,7 +941,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         ret.append(
                             TracePoint(
                                 instructions[new_state.instr_idx].address,
-                                "'NOT ZERO FLAG (TODO)'", e.b))
+                                False, e.b))
                         new_state.instr_idx += 2
                 return new_state
             case BoolExpression.OP_AND:
@@ -937,14 +952,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                        "b")
                     ret.append(
                         TracePoint(instructions[new_state.instr_idx].address,
-                                   "'ZERO FLAG (TODO)'", e.a))
+                                   True, e.a))
                     new_state.instr_idx += 2
                 elif instructions[new_state.instr_idx].mnemonic == "tbnz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1],
                                        "b")
                     ret.append(
                         TracePoint(instructions[new_state.instr_idx].address,
-                                   "'NOT ZERO FLAG (TODO)'", e.a))
+                                   False, e.a))
                     new_state.instr_idx += 2
 
                 new_state = handle_operand(e.b, new_state)
@@ -955,7 +970,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         ret.append(
                             TracePoint(
                                 instructions[new_state.instr_idx].address,
-                                "'ZERO FLAG (TODO)'", e.b))
+                                True, e.b))
                         new_state.instr_idx += 2
                     elif instructions[new_state.instr_idx].mnemonic == "tbnz":
                         match_branch_isntr(
@@ -963,7 +978,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         ret.append(
                             TracePoint(
                                 instructions[new_state.instr_idx].address,
-                                "'NOT ZERO FLAG (TODO)'", e.b))
+                                False, e.b))
                         new_state.instr_idx += 2
                 #     # Need to handle last variable
                 return new_state
@@ -978,7 +993,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = handle_operand(e.a, state)
                 match instructions[new_state.instr_idx].mnemonic:
                     case "tbz" | "cbz" | "cbnz":
-                        ret.append(TracePoint(instructions[new_state.instr_idx].address, "TODO", e))
+                        ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e))
                         new_state.instr_idx +=1
                         return new_state
                     case _:
