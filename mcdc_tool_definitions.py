@@ -397,8 +397,14 @@ class BoolExpression(SAST):
     def reset_value(self) -> None:
         """Cleans calculated value for self and children"""
         self.value = None
-        for child in self.children:
-            child.reset_value()
+
+        if getattr(self, 'children', None):
+            for child in self.children:
+                if hasattr(child, 'reset_value'):
+                    child.reset_value()
+                else:
+                    if type(child).__name__ not in ['IntLiteral', 'StringLiteral', 'SizeOf']:
+                        child.value = None
 
     def set_value(self, value: bool) -> bool:
         """Set a new value an for expression, returns true if this concludes value for this expression"""
