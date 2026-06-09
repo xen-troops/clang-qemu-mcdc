@@ -265,6 +265,10 @@ class BoolVar(SAST):
         # Bool var is always a leaf
         return [self]
 
+    def set_value(self, value: bool) -> bool:
+        self.value = value
+        if self.parent:
+            self.parent.child_updated()
 
 class StringLiteral(SAST):
 
