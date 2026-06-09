@@ -730,6 +730,51 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 raise Exception(
                     f"Don't know what to do with operand {operand}")
 
+    def handle_lt_gt_op(e: BoolExpression, state: MatchState) -> MatchState:
+        # TODO: Handle differences in LT, LE, GT, GE
+        op1_state = handle_operand(e.a, state)
+        op1_state = match_optional_store(op1_state)
+        op2_state = handle_operand(e.b, op1_state)
+        new_state = op2_state
+        if not isinstance(e.b, IntLiteral):
+            # We need subs op if it is not handled by IntLiteral() handler
+            match_sub_instr_regs(instructions[new_state.instr_idx],
+                                 op1_state.target_reg, op2_state.target_reg)
+            new_state.instr_idx += 1
+
+        match instructions[new_state.instr_idx].mnemonic:
+            case "b.lt":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               "(TODO)'", e))
+            case "b.le":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               "(TODO)'", e))
+            case "b.gt":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               "(TODO)'", e))
+            case "b.ge":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               "(TODO)'", e))
+            case "cset":
+                instr = instructions[new_state.instr_idx]
+                ret.append(
+                    TracePoint(instr.address,
+                               f"CSET: {get_instr_reg_operand(instr, 0)}", e))
+                return MatchState(new_state.instr_idx + 1)
+            case _:
+                raise MatchError(
+                    f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
+                )
+        return MatchState(new_state.instr_idx + 2)
+
     @fuzzy_matcher
     def recurse(e: BoolExpression, state: MatchState) -> MatchState:
         print(f"Recurse, handling {e} at {e.loc}")
@@ -877,48 +922,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = handle_operand(e.a, state)
                 return new_state
             case BoolExpression.OP_LT:
-                op1_state = handle_operand(e.a, state)
-                op1_state = match_optional_store(op1_state)
-                op2_state = handle_operand(e.b, op1_state)
-                new_state = op2_state
-                if not isinstance(e.b, IntLiteral):
-                    # We need subs op if it is not handled by IntLiteral() handler
-                    match_sub_instr_regs(instructions[new_state.instr_idx], op1_state.target_reg, op2_state.target_reg)
-                    new_state.instr_idx +=1
-
-                match instructions[new_state.instr_idx].mnemonic:
-                    case "b.lt":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
-                        ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'LT FLAG(TODO)'", e))
-                    case "b.ge":
-                        match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                           "b")
-                        ret.append(
-                            TracePoint(instructions[new_state.instr_idx].address,
-                                       "'GE FLAG INVERSE(TODO)'", e))
-                    case "cset":
-                        instr = instructions[new_state.instr_idx]
-                        ret.append(
-                            TracePoint(instr.address, f"CSET: {get_instr_reg_operand(instr, 0)}", e))
-                        return MatchState(new_state.instr_idx + 1)
-                    case _:
-                        raise MatchError(
-                            f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
-                        )
-                return MatchState(new_state.instr_idx + 2)
+                return handle_lt_gt_op(e, state)
             case BoolExpression.OP_GT:
-                new_state = handle_operand(e.a, state)
-                new_state = match_optional_store(new_state)
-                new_state = handle_operand(e.b, new_state)
-                match_branch_isntr(instructions[new_state.instr_idx], "b.le")
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(
-                    TracePoint(instructions[new_state.instr_idx].address,
-                               "'LE FLAG(TODO)'", e))
-                return MatchState(new_state.instr_idx + 2)
+                return handle_lt_gt_op(e, state)
             case _:
                 raise Exception(f"Don't know what to do with {e} ({e.op})")
 
