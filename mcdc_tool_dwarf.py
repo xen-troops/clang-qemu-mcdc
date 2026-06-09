@@ -944,7 +944,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case BoolExpression.OP_GT:
                 return handle_lt_gt_op(e, state)
             case BoolExpression.OP_IMPLICIT_CAST:
-                raise NotImplementedError("TODO: Handle implicit bool cast")
+                new_state = handle_operand(e.a, state)
+                match instructions[new_state.instr_idx].mnemonic:
+                    case "tbz":
+                        ret.append(TracePoint(instructions[new_state.instr_idx].address, "TODO", e))
+                        new_state.instr_idx +=1
+                        return new_state
+                    case _:
+                        raise NotImplementedError(f"Don't know how to handle implicit bool cast instrction {instructions[new_state.instr_idx].mnemonic}")
             case _:
                 raise Exception(f"Don't know what to do with {e} ({e.op})")
 
