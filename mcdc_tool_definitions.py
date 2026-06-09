@@ -146,6 +146,11 @@ class SAST:
         self._is_var = False
         self.uuid = str(uuid.uuid4())
 
+    @property
+    def children(self) -> list[SAST]:
+        """Alias for methods accessing .children"""
+        return self.inner
+
     # If only each ASTEntry had valid code range...
     def update_location_range(self):
         if not self.inner:
