@@ -146,6 +146,10 @@ class SAST:
         self._is_var = False
         self.uuid = str(uuid.uuid4())
 
+        for child in self.inner:
+            if child is not None:
+                child.parent = self
+
     @property
     def children(self) -> list[SAST]:
         """Alias for methods accessing .children"""
@@ -353,9 +357,7 @@ class BoolExpression(SAST):
                  opr_a: SAST,
                  op,
                  opr_b: Optional[SAST] = None):
-        self._derived_init_(loc, ast, [opr_a])
-        if opr_b:
-            self.inner.append(opr_b)
+        self._derived_init_(loc, ast, [opr_a, opr_b] if opr_b else [opr_a])
         self.op = op
         self.loc = loc
         self.value: Optional[bool] = None
