@@ -445,6 +445,8 @@ class BoolExpression(SAST):
                 if b_present and v_b != None:
                     return self.set_value(v_a or v_b)
                 return False
+            case BoolExpression.OP_IMPLICIT_CAST:
+                return self.set_value(v_a)
             case _:
                 assert False
         pass
