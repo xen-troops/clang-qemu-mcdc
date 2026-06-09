@@ -271,7 +271,7 @@ class BoolVar(SAST):
 
     def set_value(self, value: bool) -> bool:
         self.value = value
-        if self.parent:
+        if self.parent and hasattr(self.parent, 'child_updated'):
             self.parent.child_updated()
 
 class StringLiteral(SAST):
@@ -415,7 +415,7 @@ class BoolExpression(SAST):
     def set_value(self, value: bool) -> bool:
         """Set a new value an for expression, returns true if this concludes value for this expression"""
         self.value = value
-        if self.parent:
+        if self.parent and hasattr(self.parent, 'child_updated'):
             return self.parent.child_updated()
         return True
 
