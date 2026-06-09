@@ -388,7 +388,7 @@ class BoolExpression(SAST):
     def get_leafs(self) -> list[BoolExpression]:
         ret: list[BoolExpression] = []
         ret.extend(self.a.get_leafs())
-        if self.op != BoolExpression.OP_NOT:
+        if self.op != BoolExpression.OP_NOT and self.op != BoolExpression.OP_IMPLICIT_CAST:
             ret.extend(self.b.get_leafs())
         if not ret:
             # We are the leaf
