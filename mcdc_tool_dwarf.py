@@ -809,6 +809,18 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
                                inverted, e))
+            case "tbnz":
+                inverted = op_is_gt_ge
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               inverted, e))
+            case "tbz":
+                inverted = not op_is_gt_ge
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               inverted, e))
             case "cset":
                 # TBD: Match cset condition flags
                 instr = instructions[new_state.instr_idx]
@@ -900,9 +912,17 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     inverted = True
                     match_branch_isntr(instructions[idx], "b.eq")
                     match_branch_isntr(instructions[idx + 1], "b")
-                else:
-                    match_branch_isntr(instructions[idx], "b.ne")
+                elif instructions[idx].mnemonic == "b.ne":
                     match_branch_isntr(instructions[idx + 1], "b")
+                elif instructions[idx].mnemonic == "cbz":
+                    inverted = True
+                    match_branch_isntr(instructions[idx + 1], "b")
+                else:
+                    match_branch_isntr(instructions[idx + 1], "cbnz")
+                    match_branch_isntr(instructions[idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[idx].address, inverted,
+                               e))
                 ret.append(
                     TracePoint(instructions[idx].address, inverted,
                                e))
@@ -955,6 +975,20 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                    True, e.a))
                     new_state.instr_idx += 2
                 elif instructions[new_state.instr_idx].mnemonic == "tbnz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                       "b")
+                    ret.append(
+                        TracePoint(instructions[new_state.instr_idx].address,
+                                   False, e.a))
+                    new_state.instr_idx += 2
+                elif instructions[new_state.instr_idx].mnemonic == "cbz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                       "b")
+                    ret.append(
+                        TracePoint(instructions[new_state.instr_idx].address,
+                                   False, e.a))
+                    new_state.instr_idx += 2
+                elif instructions[new_state.instr_idx].mnemonic == "cbnz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1],
                                        "b")
                     ret.append(
