@@ -119,7 +119,7 @@ class ExprTraceInfo:
         return ret
 
     def __str__(self):
-        return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.tp)} trace points>"
+        return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.trace_points)} trace points>"
 
 
 def _find_expr_for_loc(dw_loc: DwarfLoc,

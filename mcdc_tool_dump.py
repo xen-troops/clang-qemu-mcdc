@@ -1,4 +1,5 @@
 from mcdc_tool_parser import SAST, ASTEntry
+from mcdc_tool_dwarf import ExprTraceInfo, TracePoint
 from pprint import pprint
 import pickle
 import json
@@ -6,6 +7,11 @@ import json
 def load_mcdc_data() -> list[SAST]:
     with open("mcdc.pickle", "rb") as f:
         expressions: SAST = pickle.load(f)
+        return expressions
+
+def load_mcdc_dwarf_data() -> list[ExprTraceInfo]:
+    with open("mcdc-dwarf.pickle", "rb") as f:
+        expressions: ExprTraceInfo = pickle.load(f)
         return expressions
 
 def main():
@@ -18,6 +24,14 @@ def main():
     for expr in data:
         print(expr.uuid, expr, expr.has_fcall())
     #recurse_dump(0, data[3260].ast)
+
+    dwarf_data = load_mcdc_dwarf_data()
+    print(f"\n\nTotal number of entries after dwarf parse: {len(dwarf_data)}")
+    for expr_dwarf in dwarf_data:
+        print(str(expr_dwarf))
+        print(f"Expression: {expr_dwarf.expr}\n")
+        for tp in expr_dwarf.trace_points:
+            print(f"    {str(tp)}")
 
 def recurse_dump(shift: int, ast: ASTEntry):
     tmp = ast.data.copy()
