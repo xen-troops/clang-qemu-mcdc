@@ -18,6 +18,26 @@ from pprint import pprint
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
 import os
+import logging
+import traceback
+import functools
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+
+#Tracing/debugging facilities
+def null_trace(prefix: str, msg: str):
+    pass
+
+def log_trace(prefix: str, msg: str):
+    trace = traceback.extract_stack(limit=2)
+    p = f"[{prefix}][{trace[0].name}:{trace[0].lineno}]"
+    log.debug(f"{p:32}|{msg}")
+
+
+TRACE_EXPR_LOCATOR = functools.partial(log_trace, "ExprLocator")
+TRACE_CU = functools.partial(log_trace, "HandleCU")
+TRACE_MATCH = functools.partial(log_trace, "Match")
 
 
 class DwarfInlinedFunc:
@@ -248,17 +268,17 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
                                      "__aarch64_have_sme.c", "unwind-c.c"):
         # Nothing good in libgcc internals
         return []
-    print(f"Handling compile unit {cu_name}")
+    TRACE_CU(f"Handling compile unit {cu_name}")
     dwarf_locs = parse_locs(cu)
     ret: list[TracePoint] = []
     inlines = _collect_inlines(cu)
-    print("Inlines:")
+    TRACE_CU("Inlines:")
     pprint(inlines)
     for next_expr in _get_next_expr_for_processing(dwarf_locs, expressions,
                                                    inlines):
         data = get_code_for_range(elffile, next_expr.start_addr,
                                   next_expr.end_addr)
-        print(f"Found next expr: {next_expr}")
+        TRACE_CU(f"Found next expr: {next_expr}")
         if not data:
             raise Exception(f"Can't get data for expr {next_expr}")
         ret.append(
@@ -588,7 +608,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         arg1,
                         MatchState(offset, state.target_reg, state.partial))
                 except MatchError as e:
-                    print(f"   Got exception: {e}")
+                    TRACE_MATCH(f"   Got exception: {e}")
                     offset += 1
             raise MatchError(f"Fuzzy matching failed for {state}")
 
@@ -656,7 +676,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
-        print("handle_operand", type(operand))
+        TRACE_MATCH(f"handle_operand {type(operand)}")
         match operand:
             case BoolVar() | NonBoolVar():
                 v = get_variable_at_loc(cu,
@@ -680,19 +700,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         instr = instructions[state.instr_idx]
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
-                        print(f"  Found read at 0x{instr.address:x}")
+                        TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
                         return MatchState(
                             state.instr_idx + 1,
                             aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_addrx":
                         abs_addr = cu.dwarfinfo.get_addr(
                             cu, v.loc_expr.args[0])
-                        print(f"Global variable offset is {abs_addr:x}")
+                        TRACE_MATCH(f"Global variable offset is {abs_addr:x}")
                         instr = instructions[state.instr_idx]
                         offset = get_adrp_addr(instr)
                         reg = get_instr_reg_operand(instr, 0)
                         rem = abs_addr - offset
-                        print(f"remained is {rem} in {reg}")
+                        TRACE_MATCH(f"remainder is {rem} in {reg}")
                         instr = instructions[state.instr_idx + 1]
                         match_instr_read_mem_operand(instr, 1, reg, rem)
                         return MatchState(
@@ -704,14 +724,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         instr = instructions[state.instr_idx]
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
-                        print(f"  Found read at 0x{instr.address:x}")
+                        TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
                         return MatchState(
                             state.instr_idx + 1,
                             aarch64_reg_name(instr.operands[0].reg))
                     case _:
                         raise Exception(f"Unknown var op {v.loc_expr.op_name}")
             case IntLiteral():
-                print(
+                TRACE_MATCH(
                     f"Handling int const '{operand.value}' for reg {state.target_reg}"
                 )
                 if operand.value == 0:
@@ -793,7 +813,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     @fuzzy_matcher
     def recurse(e: BoolExpression, state: MatchState) -> MatchState:
-        print(f"Recurse, handling {e} at {e.loc}")
+        TRACE_MATCH(f"Recurse, handling {e} at {e.loc}")
         assert isinstance(e, BoolExpression)
         match e.op:
             case BoolExpression.OP_EQ:
@@ -987,6 +1007,7 @@ def load_mcdc_data() -> list[SAST]:
 
 
 def main():
+    logging.basicConfig(level=logging.DEBUG)
     mcdc_data = load_mcdc_data()
     #    process_elf("~/work/xen/xen/xen-syms")
     process_elf(sys.argv[1], mcdc_data)
