@@ -1,0 +1,88 @@
+ARCH ?= x86_64-pc-linux-gnu
+
+CC ?= gcc
+GCOV ?= gcov
+
+ifneq (,$(findstring clang,$(CC)))
+    COMPILER = clang
+    CFLAGS = -g -O0 -fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc
+else
+    COMPILER = gcc
+    CFLAGS = -g -O0 -fprofile-arcs -ftest-coverage -fcondition-coverage
+endif
+
+TEST_SRCS = \
+    tests/test_var_assign.c \
+    tests/test_basics.c
+#    tests/test_inlines.c \
+#    tests/test_ariphmetics.c \
+#    tests/test_func_calls.c \
+
+TEST_BINS = $(TEST_SRCS:.c=.host)
+
+.PHONY: all clean report
+
+all: $(TEST_BINS)
+
+tests/%.host.o: tests/%.c Makefile.host
+	$(CC) $(CFLAGS) -c $< -o $@
+
+tests/%.host: tests/%.host.o
+	$(CC) $(CFLAGS) -static $< -o $@
+
+ifeq ($(COMPILER), gcc)
+
+tests/%.host.run: tests/%.host
+	@echo ">> Natively executing $< with $(CC)..."
+	./$<
+	@touch $@
+
+host_reference.info: $(TEST_BINS:%=%.run)
+	@echo ">> Capturing GCC profile data using $(GCOV)..."
+	lcov --gcov-tool $(GCOV) --capture --directory tests/ --output-file host_reference.info --rc lcov_branch_coverage=1 --mcdc-coverage
+
+report: host_reference.info
+	@echo ">> Generating native GCC HTML coverage report..."
+	genhtml --branch-coverage --mcdc-coverage -o host-coverage-report host_reference.info
+	@echo "Done! Open host-coverage-report/index.html in your browser."
+
+clean:
+	rm -f tests/*.host.o tests/*.host tests/*.gcda tests/*.gcno tests/*.host.run host_reference.info
+	rm -rf host-coverage-report/
+
+else
+PROFRAW_FILES = $(TEST_BINS:%=%.profraw)
+
+tests/%.host.profraw: tests/%.host
+	@echo ">> Natively executing $< with $(CC)..."
+	LLVM_PROFILE_FILE=$@ ./$<
+
+host_reference.info: $(PROFRAW_FILES)
+	@echo ">> Merging LLVM profile data..."
+	llvm-profdata merge -sparse $(PROFRAW_FILES) -o host_merged.profdata
+	@echo ">> Exporting LLVM coverage to JSON format..."
+	llvm-cov export -format=text \
+		-instr-profile=host_merged.profdata \
+		$(word 1, $(TEST_BINS)) $(foreach bin, $(wordlist 2, $(words $(TEST_BINS)), $(TEST_BINS)), -object $(bin)) \
+		> host_coverage.json
+	@echo ">> Translating LLVM JSON to LCOV format..."
+	llvm2lcov --mcdc-coverage --branch-coverage \
+		--output host_reference.info \
+		host_coverage.json
+
+report: host_reference.info
+	@echo ">> Generating Clang HTML coverage report..."
+	llvm-cov show -format=html \
+		-show-mcdc \
+		-show-branches=count \
+		-instr-profile=host_merged.profdata \
+		$(word 1, $(TEST_BINS)) $(foreach bin, $(wordlist 2, $(words $(TEST_BINS)), $(TEST_BINS)), -object $(bin)) \
+		-output-dir=host-coverage-report-clang
+	@echo ">> Generating LCOV HTML coverage report from Clang data..."
+	genhtml --branch-coverage --mcdc-coverage -o host-coverage-report-lcov-clang host_reference.info
+	@echo "Done! Open host-coverage-report-clang/index.html or host-coverage-report-lcov-clang/index.html in your browser."
+
+clean:
+	rm -f tests/*.host.o tests/*.host tests/*.host.profraw host_merged.profdata host_coverage.json host_reference.info
+	rm -rf host-coverage-report-clang/ host-coverage-report-lcov-clang/
+endif

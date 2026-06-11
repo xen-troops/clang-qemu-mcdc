@@ -1,0 +1,59 @@
+TN:MCDC_Test_Report
+SF:tests/test_var_assign.c
+BRDA:19,0,0,1
+BRDA:19,0,1,4
+BRDA:19,0,2,1
+BRDA:19,0,3,3
+BRDA:19,0,4,0
+BRDA:19,0,5,3
+MCDC:19,3,t,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 97>)
+MCDC:19,3,f,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 97>)
+MCDC:19,3,t,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 49>)
+MCDC:19,3,f,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 49>)
+MCDC:19,3,t,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 84>)
+MCDC:19,3,f,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 0>] EQ <IntLiteral 84>)
+BRDA:20,0,0,1
+BRDA:20,0,1,4
+BRDA:20,0,2,1
+BRDA:20,0,3,3
+BRDA:20,0,4,0
+BRDA:20,0,5,3
+MCDC:20,3,t,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 98>)
+MCDC:20,3,f,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 98>)
+MCDC:20,3,t,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 49>)
+MCDC:20,3,f,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 49>)
+MCDC:20,3,t,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 84>)
+MCDC:20,3,f,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 1>] EQ <IntLiteral 84>)
+BRDA:21,0,0,1
+BRDA:21,0,1,4
+BRDA:21,0,2,1
+BRDA:21,0,3,3
+BRDA:21,0,4,0
+BRDA:21,0,5,3
+MCDC:21,3,t,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 99>)
+MCDC:21,3,f,1,0,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 99>)
+MCDC:21,3,t,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 49>)
+MCDC:21,3,f,1,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 49>)
+MCDC:21,3,t,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 84>)
+MCDC:21,3,f,0,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 2>] EQ <IntLiteral 84>)
+BRDA:22,0,0,1
+BRDA:22,0,1,4
+BRDA:22,0,2,0
+BRDA:22,0,3,4
+BRDA:22,0,4,1
+BRDA:22,0,5,3
+MCDC:22,3,t,1,0,((<c-cast> char)((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>]) EQ <IntLiteral 100>)
+MCDC:22,3,f,1,0,((<c-cast> char)((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>]) EQ <IntLiteral 100>)
+MCDC:22,3,t,0,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>] EQ <IntLiteral 49>)
+MCDC:22,3,f,0,1,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>] EQ <IntLiteral 49>)
+MCDC:22,3,t,1,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>] EQ <IntLiteral 84>)
+MCDC:22,3,f,1,2,((<array-subscr><NonBoolVar (char *)array>)[<IntLiteral 3>] EQ <IntLiteral 84>)
+DA:19,1
+DA:20,1
+DA:21,1
+DA:22,1
+BRF:24
+BRH:20
+LF:4
+LH:4
+end_of_record
