@@ -15,6 +15,7 @@ from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoo
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript
 import pickle
 import sys
+import argparse
 from typing import Optional
 from pprint import pprint
 import capstone
@@ -291,7 +292,10 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     return ret
 
 
-def process_elf(fname: str, expressions: list[SAST]):
+def process_elf(fname: str,
+                expressions: list[SAST],
+                out_dwarf_pickle: str,
+                out_plugin_conf: str):
     f = open(fname, "rb")
     elffile = ELFFile(f)
     if not elffile.has_dwarf_info():
@@ -305,12 +309,12 @@ def process_elf(fname: str, expressions: list[SAST]):
     for cu in dwarfinfo.iter_CUs():
         ret.extend(process_cu(cu, elffile, dis, expressions))
 
-    with open("plugin.conf", "wt") as out:
+    with open(out_plugin_conf, "wt") as out:
         out.write(f"; ELF name: {fname}\n")
         for eti in ret:
             out.write(eti.format())
 
-    with open("mcdc-dwarf.pickle", "wb") as fp:
+    with open(out_dwarf_pickle, "wb") as fp:
         pickle.dump(ret, fp)
 
 
@@ -1051,17 +1055,42 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 #        locations.
 
 
-def load_mcdc_data() -> list[SAST]:
-    with open("mcdc.pickle", "rb") as f:
+def load_mcdc_data(filepath: str) -> list[SAST]:
+    with open(filepath, "rb") as f:
         expressions: SAST = pickle.load(f)
         return expressions
 
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
-    mcdc_data = load_mcdc_data()
-    #    process_elf("~/work/xen/xen/xen-syms")
-    process_elf(sys.argv[1], mcdc_data)
+    parser = argparse.ArgumentParser(description="MC/DC Dwarf/AST Matcher")
+
+    parser.add_argument(
+        "executable",
+        help="Path to the target executable file"
+    )
+
+    parser.add_argument(
+        "input_pickle",
+        help="Path to the generated pickle file with AST classes"
+    )
+    parser.add_argument(
+        "output_pickle",
+        help="Path to pickle file to save ExpressionInfo data"
+    )
+    parser.add_argument(
+        "out_plugin_conf",
+        help="Path to pickle file to save ExpressionInfo data"
+    )
+
+    args = parser.parse_args()
+
+    mcdc_data = load_mcdc_data(args.input_pickle)
+
+    process_elf(args.executable,
+                mcdc_data,
+                args.output_pickle,
+                args.out_plugin_conf)
 
 
 if __name__ == "__main__":

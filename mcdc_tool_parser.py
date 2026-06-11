@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 from pprint import pprint
 import subprocess
 import pickle
@@ -51,8 +52,8 @@ def filter_by_fcall(expressions: list[SAST]):
     print(f"Removed {removed} expressions because thay had function calls")
 
 
-def get_bool_expr_list() -> list[BoolExpression]:
-    compilation_db = open("compile_commands.json", "rt")
+def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
+    compilation_db = open(compile_commands, "rt")
     db = json.load(compilation_db)
     seen = []
 
@@ -88,7 +89,26 @@ def lift_up_fcalls(expressions: list[SAST]):
     expressions.extend(subexpr)
 
 def main():
-    expressions = get_bool_expr_list()
+    parser = argparse.ArgumentParser(description="MC/DC AST Parser")
+
+    parser.add_argument(
+        "input_source",
+        help="Path to the source .c file"
+    )
+
+    parser.add_argument(
+        "output_pickle",
+        help="Path to save the generated mcdc.pickle"
+    )
+    parser.add_argument(
+        "compile_commands",
+        help="Path to the compile_commands.json file"
+    )
+
+    args = parser.parse_args()
+
+    expressions = get_bool_expr_list(args.compile_commands)
+
     lift_up_fcalls(expressions)
     filter_same_expr(expressions)
     filter_by_source(expressions)
@@ -101,7 +121,7 @@ def main():
         expr.update_location_range()
         print(f"{expr} at {expr.loc_range}")
 #    pprint(expressions)
-    with open("mcdc.pickle", "wb") as f:
+    with open(args.output_pickle, "wb") as f:
         pickle.dump(expressions, f)
 
 
