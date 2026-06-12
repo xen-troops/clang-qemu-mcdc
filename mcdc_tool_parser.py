@@ -58,8 +58,6 @@ def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
     seen = []
 
     bool_expr: list[BoolExpression] = []
-    # handle_file("test2_helpers.c", ["clang", "-c", "-O2", "test2_expr.c"])
-    # return
     for entry in db:
         f: str = entry["file"]
         if not f.endswith(".c"):
@@ -112,15 +110,11 @@ def main():
     lift_up_fcalls(expressions)
     filter_same_expr(expressions)
     filter_by_source(expressions)
-    #filter_by_fcall(expressions)
-    # for expr in expressions:
-    #     for decision in expr.get_decisions():
-    #         print(decision, decision.get_leafs())
     print(f"Saving {len(expressions)} expressions")
     for expr in expressions:
         expr.update_location_range()
         print(f"{expr} at {expr.loc_range}")
-#    pprint(expressions)
+
     with open(args.output_pickle, "wb") as f:
         pickle.dump(expressions, f)
 
@@ -144,14 +138,8 @@ def handle_file(fname: str, args: list[str]):
     print(args)
     result = subprocess.run(args, capture_output=True, check=True)
     data = json.loads(result.stdout, object_hook=object_hook)
-    #    pprint(data)
     data.update_locations(fname, 1)
-    #    print(data)
     bool_expressions = deep_dive(data)
-    # for expr in bool_expressions:
-    #     print("Expression:", expr)
-    #     print("    Decisions", expr.get_decisions())
-    #    pprint(bool_expressions)
     return bool_expressions
 
 
@@ -221,16 +209,6 @@ def handle_expression(ast: ASTEntry) -> SAST:
             return BoolExpression(ast.get_loc(), ast, arg,
                                   BoolExpression.OP_NOT)
 
-        # replace (++x) with (x+1) and (x++) with just (x)
-        # if opcode == "++" or opcode == "--":
-        #     if not ast.data["isPostfix"]:
-        #         opcode = opcode[0]
-        #         arg2 = ExpressionOperand(ast.get_loc(), ExpressionOperand.OPR_INT_CONST, 1, ast)
-        #         return ExpressionOperand(ast.get_loc(),
-        #                                  ExpressionOperand.OPR_NON_BOOL_EXPR,
-        #                                  Expression(ast.get_loc(), opcode, [arg, arg2]), ast)
-        #     else:
-        #         return arg
         return NonBoolExpression(ast.get_loc(), opcode, [arg], ast)
 
     def handle_implicit_cast(ast: ASTEntry):
