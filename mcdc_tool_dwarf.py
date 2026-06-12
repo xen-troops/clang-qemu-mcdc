@@ -28,9 +28,11 @@ import functools
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
+
 #Tracing/debugging facilities
 def null_trace(prefix: str, msg: str):
     pass
+
 
 def log_trace(prefix: str, msg: str):
     trace = traceback.extract_stack(limit=2)
@@ -123,41 +125,6 @@ class ExprTraceInfo:
         return f"<ExprTraceInfo for expr at {self.expr.loc_range} with {len(self.trace_points)} trace points>"
 
 
-def _find_expr_for_loc(dw_loc: DwarfLoc,
-                       expr_list: list[SAST],
-                       ignored: SAST = None):
-    fname = dw_loc.fname
-    line = dw_loc.lp_state.line
-    col = dw_loc.lp_state.column
-
-    for expr in expr_list:
-        if expr.loc.file != fname or expr == ignored:
-            continue
-        if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
-            continue
-        if (line == expr.loc_range.begin.line
-                and col < expr.loc_range.begin.col) or (
-                    line == expr.loc_range.end.line
-                    and col > expr.loc_range.end.col):
-            continue
-        return expr
-    return None
-
-
-def _find_last_loc_for_expr(expr: SAST, locs: list[DwarfLoc],
-                            start_idx: int) -> int:
-    last_line = expr.loc_range.end.line
-    last_col = expr.loc_range.end.col
-    for idx in range(start_idx - 1, len(locs)):
-        loc = locs[idx]
-        if (loc.lp_state.line == last_line and loc.lp_state.column
-                >= last_col) or loc.lp_state.line >= last_line:
-            return idx
-    raise Exception(
-        "How it is possible that we found start for expression, but can't find an end?"
-    )
-
-
 def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
 
     def _process_dies(die: DIE) -> list[DwarfInlinedFunc]:
@@ -184,84 +151,138 @@ def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
     return _process_dies(cu.get_top_DIE())
 
 
-def _addr_inside_inline(inlines: list[DwarfInlinedFunc], addr: int) -> bool:
-    return any((addr >= inline.low_addr and addr <= inline.high_addr
-                for inline in inlines))
+def _addr_inside_inline(inline: DwarfInlinedFunc, addr) -> bool:
+    return addr >= inline.low_addr and addr <= inline.high_addr
+
+
+def _addr_inside_inlines(inlines: list[DwarfInlinedFunc], addr: int) -> bool:
+    return any((_addr_inside_inline(inline, addr) for inline in inlines))
+
+
+def _file_line_col_in_expr(expr: SAST, fname: str, line: int,
+                           col: int) -> bool:
+    if expr.loc.file != fname:
+        return False
+    # Zero values are special
+    if not line or not col:
+        return False
+
+    if line < expr.loc_range.begin.line or line > expr.loc_range.end.line:
+        return False
+    if line == expr.loc_range.begin.line and col < expr.loc_range.begin.col:
+        return False
+    if line == expr.loc_range.end.line and col > expr.loc_range.end.col:
+        return False
+
+    return True
+
+def _loc_is_in_expr(expr: SAST, loc: DwarfLoc) -> bool:
+    fname = loc.fname
+    line = loc.lp_state.line
+    col = loc.lp_state.column
+    return _file_line_col_in_expr(expr, fname, line, col)
+
+
+def _get_inlined_func_by_addr(inlines: list[DwarfInlinedFunc],
+                              addr: int) -> Optional[DwarfInlinedFunc]:
+    for inline in inlines:
+        if _addr_inside_inline(inline, addr):
+            return inline
+
+    return None
+
+
+def _get_locations_for_inline(locations: list[DwarfLoc],
+                              inline: DwarfInlinedFunc) -> list[DwarfLoc]:
+    start_idx = None
+    end_idx = None
+    for idx, loc in enumerate(locations):
+        addr = loc.lp_state.address
+        if _addr_inside_inline(inline, addr):
+            end_idx = idx
+            if not start_idx:
+                start_idx = idx
+
+    assert start_idx
+    assert end_idx
+    return locations[start_idx:end_idx + 1]
+
+
+def _get_addr_ranges_for_expr(
+        expr: SAST, locations: list[DwarfLoc],
+        inlines: list[DwarfInlinedFunc]) -> list[(int, int)]:
+    ret = []
+    # Our life would be much easier if there wasn't forced inlines
+    # But taking inlines into account, the same expression can appear
+    # multiple times in object file
+
+    # Also. this function will be pretty slow, as it scans whole list
+    # of locations. Many optimisatation possibilities here
+    start_loc: DwarfLoc = None
+    end_loc: DwarfLoc = None
+    skip_to_addr: Optional[int] = None
+    TRACE_EXPR_LOCATOR(f"Looking for address ranges for expr {expr}")
+    ignore_inlines = False
+    for loc in locations:
+        if skip_to_addr and skip_to_addr >= loc.lp_state.address:
+            continue
+        if _addr_inside_inlines(inlines,
+                                loc.lp_state.address) and not ignore_inlines:
+            inline = _get_inlined_func_by_addr(inlines, loc.lp_state.address)
+            if not start_loc:
+                TRACE_EXPR_LOCATOR(
+                    f"  address {loc.lp_state.address:#x} lies inside {inline}"
+                )
+                assert inline
+
+                # Recurse self
+                r = _get_addr_ranges_for_expr(
+                    expr, _get_locations_for_inline(locations, inline), [])
+                assert len(r) <= 2
+                TRACE_EXPR_LOCATOR(f"  recurse call returned {r}")
+                ret.extend(r)
+                if r:
+                    skip_to_addr = inline.high_addr
+                continue
+            else:
+                # Heuristic: if expr starts and the same point as
+                # inline, we treat it as outside of inline
+                if _loc_is_in_expr(
+                        expr, loc) and loc.lp_state.address == inline.low_addr:
+                    ignore_inlines = True
+
+        if _loc_is_in_expr(expr, loc):
+            # Always update end_loc
+            end_loc = loc
+            if not start_loc:
+                start_loc = loc
+
+    if start_loc:
+        assert end_loc
+        ret.append((start_loc.lp_state.address, end_loc.lp_state.address))
+
+    TRACE_EXPR_LOCATOR(f"  returning {ret}")
+    return ret
 
 
 class ExprAddressData:
 
-    def __init__(self, expr: SAST, start_addr: int, end_addr: int,
-                 skip_list: list[(int, int)], loc_idx: int):
+    def __init__(self, expr: SAST, start_addr: int, end_addr: int):
         self.expr = expr
         self.start_addr = start_addr
         self.end_addr = end_addr
-        self.skip_list = skip_list
-        self.loc_idx = loc_idx
 
     def __repr__(self) -> str:
         return f"<ExprData {hex(self.start_addr)}-{hex(self.end_addr)} for {self.expr} at {self.expr.loc_range}>"
 
 
-def _get_next_expr_for_processing(locs: list[DwarfLoc],
-                                  expressions: list[SAST],
-                                  inlines: list[DwarfInlinedFunc],
-                                  ignore_expr: SAST = [],
-                                  level=0) -> Optional[ExprAddressData]:
-    found_expr: SAST = None
-    final_loc_idx: int = 0
-    for i, loc in enumerate(locs):
-        # If we know last location for expr - skip to it
-        if i < final_loc_idx:
-            continue
-
-        # "compiler cannot attribute instruction to any source line" per Dwarf5 specification
-        if loc.lp_state.line == 0:
-            continue
-
-        # "The value 0 is reserved to indicate that a statement begins at the “left edge” of the line" per Dwarf5 specification
-        # The irony is that clang injects it inside expression sometimes
-        if loc.lp_state.column == 0:
-            continue
-
-        cur_expr = _find_expr_for_loc(loc, expressions, ignore_expr)
-
-        if not cur_expr and not found_expr:
-            continue
-        if not found_expr:
-            found_expr = cur_expr
-            start_loc_idx = i
-            continue
-        if cur_expr != found_expr or i == (len(locs) - 1):
-            if _addr_inside_inline(inlines, loc.lp_state.address):
-                # We are not done yet
-                continue
-            final_loc_idx = _find_last_loc_for_expr(found_expr, locs, i)
-
-            # Fixup for inlines
-            if final_loc_idx < i - 1:
-                final_loc_idx = i - 1
-
-            # We have found the whole range for that expr
-            start_addr = locs[start_loc_idx].lp_state.address
-
-            # Probably a hack, but somethimes dwarf data is a bit murky...
-            end_addr = locs[final_loc_idx].lp_state.address + 16
-
-            # Return outer expr and then try....
-            yield ExprAddressData(found_expr, start_addr, end_addr, [], i)
-
-            # ... end then try to find inner ones
-            # (TODO: Maybe we want to change order other way around?)
-            for ead in _get_next_expr_for_processing(
-                    locs[start_loc_idx:final_loc_idx], expressions, inlines,
-                    found_expr):
-                yield ead
-
-            # Reset state
-            found_expr = cur_expr
-            start_loc_idx = i
-    return
+def _get_next_expr_for_processing(
+        locs: list[DwarfLoc], expressions: list[SAST],
+        inlines: list[DwarfInlinedFunc]) -> Optional[ExprAddressData]:
+    for expr in expressions:
+        ranges = _get_addr_ranges_for_expr(expr, locs, inlines)
+        for r in ranges:
+            yield ExprAddressData(expr, r[0], r[1] + 16)
 
 
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
@@ -771,6 +792,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return state
             case FCall():
                 return handle_fcall(operand, state)
+            case NonBoolExpression():
+                new_state = handle_operand(operand.operands[0], state)
+                return MatchState(new_state.instr_idx + 1,
+                                  new_state.target_reg, True)
+                pass
             case _:
                 raise Exception(
                     f"Don't know what to do with operand {operand}")
@@ -1037,7 +1063,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         new_state.instr_idx +=1
                         return new_state
                     case _:
-                        raise NotImplementedError(f"Don't know how to handle implicit bool cast instrction {instructions[new_state.instr_idx].mnemonic}")
+                        raise NotImplementedError(
+                            f"Don't know how to handle implicit bool cast instrction {instructions[new_state.instr_idx].mnemonic}"
+                        )
             case _:
                 raise Exception(f"Don't know what to do with {e} ({e.op})")
 
