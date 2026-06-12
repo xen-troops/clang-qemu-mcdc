@@ -17,7 +17,7 @@ import pickle
 import sys
 import argparse
 from typing import Optional
-from pprint import pprint
+from pprint import pformat, pprint
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
 import os
@@ -326,7 +326,7 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     ret: list[TracePoint] = []
     inlines = _collect_inlines(cu)
     TRACE_CU("Inlines:")
-    pprint(inlines)
+    TRACE_CU(pformat(inlines))
     for next_expr in _get_next_expr_for_processing(dwarf_locs, expressions,
                                                    inlines):
         data = get_code_for_range(elffile, next_expr.start_addr,
