@@ -77,9 +77,12 @@ class ASTEntry:
         if "range" in data and data["range"]["begin"]:
             self.range = CodeRange(data["range"])
         self.data = data
+        self.parent = None
         for i, ch in enumerate(self.inner):
             if not ch:
                 self.inner[i] = ASTEntry({"kind": "NULL"})
+            else:
+                ch.parent = self
 
     def __repr__(self):
         return self.__format__(0)
@@ -128,6 +131,7 @@ class SAST:
         # Little help for typing hints
         self.inner: list[SAST] = []
         self.parent: Optional[SAST] = None
+        self._function_name: str = None
 
         # Calculated location range, not to be confused with
         # ranges from ASTentry
@@ -149,6 +153,9 @@ class SAST:
         for child in self.inner:
             if child is not None:
                 child.parent = self
+        # Cached value for function name where this entry
+        # resides
+        self._function_name = None
 
     @property
     def children(self) -> list[SAST]:
@@ -241,6 +248,20 @@ class SAST:
         for ch in self.inner:
             ret.extend(ch.get_topmost_bool_expr())
         return ret
+
+    def function_name(self) ->str:
+        if not self._function_name:
+            ast = self.ast
+            while ast:
+                if ast.kind == "FunctionDecl":
+                    self._function_name = ast.data["name"]
+                    break
+                else:
+                    ast = ast.parent
+            else:
+                # Must be global scope
+                self._function_name = "(global scope)"
+        return self._function_name
 
 
 class NonBoolVar(SAST):
