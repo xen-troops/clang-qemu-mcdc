@@ -357,6 +357,7 @@ def process_elf(fname: str, expressions: list[SAST], out_dwarf_pickle: str,
     for cu in dwarfinfo.iter_CUs():
         ret.extend(process_cu(cu, elffile, dis, expressions))
 
+    print(f"Created {len(ret)} tracepoint objects")
     with open(out_plugin_conf, "wt") as out:
         out.write(f"; ELF name: {fname}\n")
         for eti in ret:
