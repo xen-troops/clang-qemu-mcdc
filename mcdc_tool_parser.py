@@ -354,36 +354,30 @@ def handle_expression(ast: ASTEntry) -> SAST:
                     if idx != 2 and item:
                         rest.append(recurse(item))
                 return FlowControlStructure(ast.get_loc, recurse(ast.inner[2]), rest, ast)
-#TODO
-            case "StmtExpr":
-                raise Nope()
-#TODO
-            case "ConstantExpr":
-                raise Nope()
+
 
             case "CompoundStmt" | "ReturnStmt":
                 return MiscExpr(ast.loc, ast, [recurse(inner) for inner in ast.inner])
-#TODO
-            case "CompoundLiteralExpr":
-                raise Nope()
-#TODO
-            case "OffsetOfExpr":
-                raise Nope()
-#TODO
-            case "OpaqueValueExpr":
-                raise Nope()
-#TODO
-            case "PredefinedExpr":
-                raise Nope()
-#TODO
-            case "TypeTraitExpr":
-                raise Nope()
-#TODO
-            case "VAArgExpr":
-                raise Nope()
 
-            case "NULL":
+            case "StmtExpr" | "VarDecl"  | "DeclStmt" | \
+                "SwitchStmt" | "CaseStmt" | "DefaultStmt" | \
+                "LabelStmt" | "OpaqueValueExpr" | "InitListExpr" | \
+                "CompoundLiteralExpr" | "VAArgExpr" :
+
+                children = [recurse(inner) for inner in ast.inner if inner]
+                return MiscExpr(ast.loc, ast, children)
+
+            case "NULL" | "GCCAsmStmt" | "NullStmt"  | "ContinueStmt" | \
+                "BreakStmt" | "TypeOfExprType" | "GotoStmt" | "BuiltinType" | \
+                "StaticAssertDecl" | "OffsetOfExpr" | "TypeTraitExpr" | \
+                "ConstantExpr" | "IncompleteArrayType" | "ConstantArrayType" | \
+                "RecordDecl" | "PredefinedExpr" | "ImplicitValueInitExpr" :
                 return NullOp(ast.loc, ast)
+
+            case kind if kind.endswith("Attr") :
+                # UnusedAttr, AsmLabelAttr, etc
+                return NullOp(ast.loc, ast)
+
             case _:
                 pprint(ast)
                 pprint(ast.data)
