@@ -7,14 +7,12 @@ from elftools.dwarf.descriptions import (describe_DWARF_expr,
 from elftools.dwarf.locationlists import (LocationEntry, LocationExpr,
                                           LocationParser, LocationLists)
 from elftools.dwarf.lineprogram import LineProgram, LineState
-from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.die import DIE
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript
 import pickle
-import sys
 import argparse
 from typing import Optional
 from pprint import pformat, pprint
@@ -176,6 +174,7 @@ def _file_line_col_in_expr(expr: SAST, fname: str, line: int,
 
     return True
 
+
 def _loc_is_in_expr(expr: SAST, loc: DwarfLoc) -> bool:
     fname = loc.fname
     line = loc.lp_state.line
@@ -224,6 +223,7 @@ def _get_fcalls_in_expr(expr: SAST) -> list[str]:
     for child in expr.inner:
         ret.extend(_get_fcalls_in_expr(child))
     return ret
+
 
 def _get_addr_ranges_for_expr(
         expr: SAST, locations: list[DwarfLoc],
@@ -342,9 +342,7 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     return ret
 
 
-def process_elf(fname: str,
-                expressions: list[SAST],
-                out_dwarf_pickle: str,
+def process_elf(fname: str, expressions: list[SAST], out_dwarf_pickle: str,
                 out_plugin_conf: str):
     f = open(fname, "rb")
     elffile = ELFFile(f)
@@ -694,14 +692,18 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def _handle_inlined_fcall(operand: SAST, state: MatchState):
         # Find inline function and fast forwards to its end
         fname = operand.fname.name
-        TRACE_MATCH(f"Looking for range for inlined function {fname}, presented with range {instructions[state.instr_idx].address:x} - {instructions[-1].address:x}")
+        TRACE_MATCH(
+            f"Looking for range for inlined function {fname}, presented with range {instructions[state.instr_idx].address:x} - {instructions[-1].address:x}"
+        )
         for inline in inlines:
             if inline.name == fname:
                 TRACE_MATCH(f"  Found candidate {inline}")
                 # Find idx for start address
                 for idx in range(state.instr_idx, len(instructions)):
                     if instructions[idx].address == inline.low_addr:
-                        TRACE_MATCH(f"  Found start of inlined function at addr {inline.low_addr:#x}")
+                        TRACE_MATCH(
+                            f"  Found start of inlined function at addr {inline.low_addr:#x}"
+                        )
                         break
                     else:
                         continue
@@ -842,7 +844,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         op2_state = handle_operand(e.b, op1_state)
         new_state = op2_state
 
-        op_is_gt_ge = (e.op == BoolExpression.OP_GT or e.op == BoolExpression.OP_GE)
+        op_is_gt_ge = (e.op == BoolExpression.OP_GT
+                       or e.op == BoolExpression.OP_GE)
 
         if not isinstance(e.b, IntLiteral):
             # We need subs op if it is not handled by IntLiteral() handler
@@ -890,9 +893,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case "cset":
                 # TBD: Match cset condition flags
                 instr = instructions[new_state.instr_idx]
-                ret.append(
-                    TracePoint(instr.address,
-                               False, e))
+                ret.append(TracePoint(instr.address, False, e))
                 return MatchState(new_state.instr_idx + 1)
             case _:
                 raise MatchError(
@@ -919,37 +920,30 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_branch_isntr(instructions[idx], "b.eq")
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address,
-                                       False, e))
+                            TracePoint(instructions[idx].address, False, e))
                     case "b.ne":
                         match_branch_isntr(instructions[idx], "b.ne")
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address,
-                                       True, e))
+                            TracePoint(instructions[idx].address, True, e))
                     case "cbnz":
                         match_branch_isntr(instructions[idx], "cbnz")
                         match_instr_reg_operand(instructions[idx], 0,
                                                 new_state.target_reg)
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address,
-                                       True, e))
+                            TracePoint(instructions[idx].address, True, e))
                     case "cbz":
                         match_branch_isntr(instructions[idx], "cbz")
                         match_instr_reg_operand(instructions[idx], 0,
                                                 new_state.target_reg)
                         match_branch_isntr(instructions[idx + 1], "b")
                         ret.append(
-                            TracePoint(instructions[idx].address,
-                                       False, e))
+                            TracePoint(instructions[idx].address, False, e))
                     case "cset":
                         # TBD: Match cset condition flags
                         ret.append(
-                            TracePoint(
-                                instructions[idx].address,
-                                False,
-                                e))
+                            TracePoint(instructions[idx].address, False, e))
                         return MatchState(idx + 1)
                     case _:
                         raise MatchError(
@@ -986,12 +980,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 else:
                     match_branch_isntr(instructions[idx + 1], "cbnz")
                     match_branch_isntr(instructions[idx + 1], "b")
-                ret.append(
-                    TracePoint(instructions[idx].address, inverted,
-                               e))
-                ret.append(
-                    TracePoint(instructions[idx].address, inverted,
-                               e))
+                ret.append(TracePoint(instructions[idx].address, inverted, e))
+                ret.append(TracePoint(instructions[idx].address, inverted, e))
                 return MatchState(idx + 2)
             case BoolExpression.OP_OR:
                 new_state = handle_operand(e.a, state)
@@ -1093,8 +1083,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = handle_operand(e.a, state)
                 match instructions[new_state.instr_idx].mnemonic:
                     case "tbz" | "cbz" | "cbnz":
-                        ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e))
-                        new_state.instr_idx +=1
+                        ret.append(
+                            TracePoint(
+                                instructions[new_state.instr_idx].address,
+                                False, e))
+                        new_state.instr_idx += 1
                         return new_state
                     case _:
                         raise NotImplementedError(
@@ -1127,31 +1120,22 @@ def main():
     logging.basicConfig(level=logging.DEBUG)
     parser = argparse.ArgumentParser(description="MC/DC Dwarf/AST Matcher")
 
-    parser.add_argument(
-        "executable",
-        help="Path to the target executable file"
-    )
+    parser.add_argument("executable",
+                        help="Path to the target executable file")
 
     parser.add_argument(
         "input_pickle",
-        help="Path to the generated pickle file with AST classes"
-    )
-    parser.add_argument(
-        "output_pickle",
-        help="Path to pickle file to save ExpressionInfo data"
-    )
-    parser.add_argument(
-        "out_plugin_conf",
-        help="Path to pickle file to save ExpressionInfo data"
-    )
+        help="Path to the generated pickle file with AST classes")
+    parser.add_argument("output_pickle",
+                        help="Path to pickle file to save ExpressionInfo data")
+    parser.add_argument("out_plugin_conf",
+                        help="Path to pickle file to save ExpressionInfo data")
 
     args = parser.parse_args()
 
     mcdc_data = load_mcdc_data(args.input_pickle)
 
-    process_elf(args.executable,
-                mcdc_data,
-                args.output_pickle,
+    process_elf(args.executable, mcdc_data, args.output_pickle,
                 args.out_plugin_conf)
 
 
