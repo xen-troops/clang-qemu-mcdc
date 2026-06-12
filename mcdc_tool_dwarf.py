@@ -40,9 +40,9 @@ def log_trace(prefix: str, msg: str):
     log.debug(f"{p:32}|{msg}")
 
 
-TRACE_EXPR_LOCATOR = functools.partial(log_trace, "ExprLocator")
-TRACE_CU = functools.partial(log_trace, "HandleCU")
-TRACE_MATCH = functools.partial(log_trace, "Match")
+TRACE_EXPR_LOCATOR = functools.partial(null_trace, "ExprLocator")
+TRACE_CU = functools.partial(null_trace, "HandleCU")
+TRACE_MATCH = functools.partial(null_trace, "Match")
 
 
 class DwarfInlinedFunc:
