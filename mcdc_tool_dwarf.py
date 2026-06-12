@@ -205,8 +205,25 @@ def _get_locations_for_inline(locations: list[DwarfLoc],
 
     assert start_idx
     assert end_idx
+
+    TRACE_EXPR_LOCATOR(
+        f"Addr ranges for {inline}: {locations[start_idx].lp_state.address:x} - {locations[end_idx].lp_state.address:x} "
+    )
     return locations[start_idx:end_idx + 1]
 
+
+def _function_name_in_inlines(fname: str, inlines: list[DwarfInlinedFunc]):
+    return any((fname == inline.name for inline in inlines))
+
+
+def _get_fcalls_in_expr(expr: SAST) -> list[str]:
+    ret = []
+    if isinstance(expr, FCall):
+        if isinstance(expr.fname, NonBoolVar):
+            ret.append(expr.fname.name)
+    for child in expr.inner:
+        ret.extend(_get_fcalls_in_expr(child))
+    return ret
 
 def _get_addr_ranges_for_expr(
         expr: SAST, locations: list[DwarfLoc],
@@ -220,48 +237,60 @@ def _get_addr_ranges_for_expr(
     # of locations. Many optimisatation possibilities here
     start_loc: DwarfLoc = None
     end_loc: DwarfLoc = None
-    skip_to_addr: Optional[int] = None
     TRACE_EXPR_LOCATOR(f"Looking for address ranges for expr {expr}")
-    ignore_inlines = False
-    for loc in locations:
-        if skip_to_addr and skip_to_addr >= loc.lp_state.address:
-            continue
-        if _addr_inside_inlines(inlines,
-                                loc.lp_state.address) and not ignore_inlines:
-            inline = _get_inlined_func_by_addr(inlines, loc.lp_state.address)
-            if not start_loc:
-                TRACE_EXPR_LOCATOR(
-                    f"  address {loc.lp_state.address:#x} lies inside {inline}"
-                )
-                assert inline
-
-                # Recurse self
+    if _function_name_in_inlines(expr.function_name(), inlines):
+        # Hard mode
+        TRACE_EXPR_LOCATOR(
+            f"   expression belongs to inlined function {expr.function_name()}"
+        )
+        for inline in inlines:
+            if inline.name == expr.function_name():
+                # TODO: Optimise me, please. No need to traverse
+                # 'locations' for ech inline
                 r = _get_addr_ranges_for_expr(
                     expr, _get_locations_for_inline(locations, inline), [])
-                assert len(r) <= 2
-                TRACE_EXPR_LOCATOR(f"  recurse call returned {r}")
-                ret.extend(r)
-                if r:
-                    skip_to_addr = inline.high_addr
-                continue
-            else:
-                # Heuristic: if expr starts and the same point as
-                # inline, we treat it as outside of inline
-                if _loc_is_in_expr(
-                        expr, loc) and loc.lp_state.address == inline.low_addr:
-                    ignore_inlines = True
+                # Heuristic: we need to include the whole inlined function
+                # even if it is absent in DWARF location data
+                if not r:
+                    continue
+                fcalls = _get_fcalls_in_expr(expr)
+                if fcalls:
+                    TRACE_EXPR_LOCATOR(f"  Function calls in expr: {fcalls}")
+                for fcall in fcalls:
+                    for inline2 in inlines:
+                        if inline2.name == fcall and inline2.low_addr <= r[0][
+                                0] and inline2.high_addr >= r[0][0]:
+                            if r[0][0] > inline2.low_addr:
+                                TRACE_EXPR_LOCATOR(
+                                    f"  moving start of expr from {r[0][0]:#x} to {inline2.low_addr:#x}"
+                                )
+                                # Replace tuple with a new one
+                                r[0] = (inline2.low_addr, r[0][1])
+                            if r[0][1] < inline2.high_addr:
+                                TRACE_EXPR_LOCATOR(
+                                    f"  moving end of expr from {r[0][1]:#x} to {inline2.high_addr:#x}"
+                                )
+                                # Replace tuple with a new one
+                                r[0] = (r[0][0], inline2.high_addr)
 
-        if _loc_is_in_expr(expr, loc):
-            # Always update end_loc
-            end_loc = loc
-            if not start_loc:
-                start_loc = loc
+                ret.extend(r)
+    else:
+        # Easy mode
+        for loc in locations:
+            if _loc_is_in_expr(expr, loc):
+                # Always update end_loc
+                end_loc = loc
+                if not start_loc:
+                    start_loc = loc
 
     if start_loc:
         assert end_loc
         ret.append((start_loc.lp_state.address, end_loc.lp_state.address))
 
-    TRACE_EXPR_LOCATOR(f"  returning {ret}")
+    TRACE_EXPR_LOCATOR("  returning [")
+    for r in ret:
+        TRACE_EXPR_LOCATOR(f"    {r[0]:#x} - {r[1]:#x}")
+    TRACE_EXPR_LOCATOR("  ]")
     return ret
 
 
@@ -665,14 +694,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def _handle_inlined_fcall(operand: SAST, state: MatchState):
         # Find inline function and fast forwards to its end
         fname = operand.fname.name
+        TRACE_MATCH(f"Looking for range for inlined function {fname}, presented with range {instructions[state.instr_idx].address:x} - {instructions[-1].address:x}")
         for inline in inlines:
             if inline.name == fname:
+                TRACE_MATCH(f"  Found candidate {inline}")
                 # Find idx for start address
                 for idx in range(state.instr_idx, len(instructions)):
                     if instructions[idx].address == inline.low_addr:
+                        TRACE_MATCH(f"  Found start of inlined function at addr {inline.low_addr:#x}")
                         break
                     else:
                         continue
+                else:
+                    continue
                     # Find idx for end address
                 for idx in range(idx, len(instructions)):
                     if instructions[idx].address == inline.high_addr:
