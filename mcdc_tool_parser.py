@@ -50,6 +50,10 @@ def filter_by_fcall(expressions: list[SAST]):
                              "because they had function calls")
 
 
+def filter_const_expr(expressions: list[SAST]):
+    return filter_and_report(lambda x: not x.is_const(), expressions,
+                             "because they were const expressions")
+
 
 def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
     compilation_db = open(compile_commands, "rt")
@@ -107,6 +111,7 @@ def main():
     expressions = get_bool_expr_list(args.compile_commands)
 
     lift_up_fcalls(expressions)
+    expressions = filter_const_expr(expressions)
     expressions = filter_same_expr(expressions)
     expressions = filter_by_source(expressions)
 

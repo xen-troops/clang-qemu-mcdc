@@ -1,9 +1,10 @@
 TEST_SRCS = \
 	tests/test_var_assign.c \
 	tests/test_basics.c \
-	tests/test_inlines.c
+	tests/test_inlines.c \
+	tests/test_const.c
+#	tests/test_ariphmetics.c
 #	tests/test_func_calls.c
-#	tests/test_ariphmetics.c \
 
 TEST_BINS = $(TEST_SRCS:.c=)
 TEST_ASMS = $(TEST_SRCS:.c=.s)
