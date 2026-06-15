@@ -18,6 +18,7 @@ from typing import Optional
 from pprint import pformat, pprint
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
+from mcdc_tool_s_loc import get_s_file_locations, SFileLoc, SFileLocMap
 import os
 import logging
 import traceback
@@ -60,12 +61,13 @@ class DwarfLoc:
     def __init__(self, fname: str, lp_state: LineState):
         self.fname = fname
         self.lp_state = lp_state
+        self.inlines: list[SFileLoc] = []
 
     def __repr__(self) -> str:
         return f"<DwarfLoc: {self.fname, self.lp_state}>"
 
 
-def parse_locs(cu) -> list[DwarfLoc]:
+def parse_locs(cu, sfilelocs: list[SFileLocMap]) -> list[DwarfLoc]:
     ret: list[LineState] = list()
     lp: LineProgram = cu.dwarfinfo.line_program_for_CU(cu)
     fnames = [x["DW_LNCT_path"].decode() for x in lp["file_names"]]
@@ -73,7 +75,22 @@ def parse_locs(cu) -> list[DwarfLoc]:
     for lp_entry in lp_entries:
         if lp_entry.state:
             state = lp_entry.state
-            ret.append(DwarfLoc(fnames[state.file], state))
+            loc = DwarfLoc(fnames[state.file], state)
+
+            # Augment with inline data
+            for sl in sfilelocs:
+                if sl.origin.fname == loc.fname and sl.origin.line == state.line and sl.origin.col == state.column:
+                    loc.inlines = sl.inlines
+                    # Heuristic (or hack, depending on how you see
+                    # it):
+                    # The same inlined expression can appear
+                    # multiple times in the same file.  Here we rely
+                    # on the fact that locations from DWARF data are
+                    # in the same order as location from assembly file
+                    sfilelocs.remove(sl)
+                    break
+
+            ret.append(loc)
     return ret
 
 
@@ -179,7 +196,10 @@ def _loc_is_in_expr(expr: SAST, loc: DwarfLoc) -> bool:
     fname = loc.fname
     line = loc.lp_state.line
     col = loc.lp_state.column
-    return _file_line_col_in_expr(expr, fname, line, col)
+
+    return _file_line_col_in_expr(expr, fname, line, col) or any(
+        (_file_line_col_in_expr(expr, i.fname, i.line, i.col)
+         for i in loc.inlines))
 
 
 def _get_inlined_func_by_addr(inlines: list[DwarfInlinedFunc],
@@ -322,7 +342,9 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
         # Nothing good in libgcc internals
         return []
     TRACE_CU(f"Handling compile unit {cu_name}")
-    dwarf_locs = parse_locs(cu)
+    s_file_name = os.path.splitext(cu_name)[0] + ".s"
+    s_file_locs = get_s_file_locations(s_file_name)
+    dwarf_locs = parse_locs(cu, s_file_locs)
     ret: list[TracePoint] = []
     inlines = _collect_inlines(cu)
     TRACE_CU("Inlines:")
