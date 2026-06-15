@@ -255,7 +255,7 @@ class SAST:
             ret.extend(ch.get_topmost_bool_expr())
         return ret
 
-    def function_name(self) ->str:
+    def function_name(self) -> str:
         if not self._function_name:
             ast = self.ast
             while ast:
@@ -300,6 +300,7 @@ class BoolVar(SAST):
         self.value = value
         if self.parent and hasattr(self.parent, 'child_updated'):
             self.parent.child_updated()
+
 
 class StringLiteral(SAST):
 
@@ -436,7 +437,9 @@ class BoolExpression(SAST):
                 if hasattr(child, 'reset_value'):
                     child.reset_value()
                 else:
-                    if type(child).__name__ not in ['IntLiteral', 'StringLiteral', 'SizeOf']:
+                    if type(child).__name__ not in [
+                            'IntLiteral', 'StringLiteral', 'SizeOf'
+                    ]:
                         child.value = None
 
     def set_value(self, value: bool) -> bool:
