@@ -51,9 +51,12 @@ class CodeRange:
         if begin and end:
             self.begin = begin
             self.end = end
-        else:
+        elif data and "begin" in data:
             self.begin = CodeLoc(data["begin"])
             self.end = CodeLoc(data["end"])
+        else:
+            self.begin = None
+            self.end = None
 
     def __repr__(self) -> str:
         return f"{self.begin} - {self.end}"
@@ -196,6 +199,10 @@ class SAST:
                     raise Exception(
                         f"Sub-expresions resides in an other file: {fname} vs {ch.loc.fname}"
                     )
+
+                if ch.loc_range.begin is None or ch.loc_range.end is None:
+                    continue
+
                 if ch.loc_range.begin.line < min_line:
                     min_line = ch.loc_range.begin.line
                     min_col = ch.loc_range.begin.col
