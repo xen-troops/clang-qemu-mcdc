@@ -11,16 +11,17 @@ from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoo
 
 
 def filter_same_expr(expressions: list[SAST]):
-    print("Removing similar expressions...")
     removed = 0
     seen: list[CodeLoc] = []
+    filtered = []
     for expr in expressions:
         if expr.loc in seen:
-            expressions.remove(expr)
             removed += 1
-            continue
-        seen.append(expr.loc)
+        else:
+            filtered.append(expr)
+            seen.append(expr.loc)
     print(f"Removed {removed} similar expressions")
+    return filtered
 
 
 SOURCE_SKIP_LIST = [
@@ -32,24 +33,22 @@ SOURCE_SKIP_LIST = [
 ]
 
 
-def filter_by_source(expressions: list[SAST]):
-    removed = 0
-    for expr in expressions:
-        if expr.loc.file in SOURCE_SKIP_LIST:
-            expressions.remove(expr)
-            removed += 1
-            continue
-    print(f"Removed {removed} expressions based on source location")
+def filter_and_report(predicate, expressions: list[SAST],
+                      reason: str) -> list[SAST]:
+    filtered = [x for x in expressions if predicate(x)]
+    print(f"Removed {len(expressions) - len(filtered)} expressions {reason}")
+    return filtered
+
+
+def filter_by_source(expressions: list[SAST]) -> list[SAST]:
+    return filter_and_report(lambda x: x.loc.file not in SOURCE_SKIP_LIST,
+                             expressions, "based on source location")
 
 
 def filter_by_fcall(expressions: list[SAST]):
-    removed = 0
-    for expr in expressions:
-        if expr.has_fcall():
-            expressions.remove(expr)
-            removed += 1
+    return filter_and_report(lambda x: not x.has_fcall(), expressions,
+                             "because they had function calls")
 
-    print(f"Removed {removed} expressions because thay had function calls")
 
 
 def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
@@ -108,8 +107,9 @@ def main():
     expressions = get_bool_expr_list(args.compile_commands)
 
     lift_up_fcalls(expressions)
-    filter_same_expr(expressions)
-    filter_by_source(expressions)
+    expressions = filter_same_expr(expressions)
+    expressions = filter_by_source(expressions)
+
     print(f"Saving {len(expressions)} expressions")
     for expr in expressions:
         expr.update_location_range()
