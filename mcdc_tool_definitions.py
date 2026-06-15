@@ -146,8 +146,8 @@ class SAST:
         self.loc = loc
         self.ast = ast
         self.parent = parent
-        self._is_const = False
-        self._is_var = False
+        self._is_const: Optional[bool] = None
+        self._is_var: Optional[bool] = None
         self.uuid = str(uuid.uuid4())
 
         for child in self.inner:
@@ -235,9 +235,15 @@ class SAST:
                                           for ch in self.inner))
 
     def is_const(self) -> bool:
+        if self._is_const == None:
+            self._is_const = all((i._is_const == True for i in self.inner))
+
         return self._is_const
 
     def is_var(self) -> bool:
+        if self._is_var == None:
+            self._is_var = all((i._is_var == True for i in self.inner))
+
         return self._is_var
 
     def get_topmost_bool_expr(self) -> list[BoolExpression]:
@@ -300,7 +306,7 @@ class StringLiteral(SAST):
     def __init__(self, loc: CodeLoc, value: str, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.value = value
-        self.is_const = True
+        self._is_const = True
 
     def __repr__(self) -> str:
         return f"<StringLiteral {self.value}>"
@@ -311,7 +317,7 @@ class IntLiteral(SAST):
     def __init__(self, loc: CodeLoc, value: int, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
         self.value = value
-        self.is_const = True
+        self._is_const = True
 
     def __repr__(self) -> str:
         return f"<IntLiteral {self.value}>"
