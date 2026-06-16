@@ -144,7 +144,6 @@ class SAST:
                        parent: Optional[SAST] = None):
         self.inner = inner
         self.loc = loc
-        self.ast = ast
         self.parent = parent
         self._is_const: Optional[bool] = None
         self._is_var: Optional[bool] = None
@@ -153,9 +152,22 @@ class SAST:
         for child in self.inner:
             if child is not None:
                 child.parent = self
-        # Cached value for function name where this entry
-        # resides
-        self._function_name = None
+
+        self._function_name = self._resolve_function_name(ast)
+
+        if ast and ast.range:
+            self._base_range = ast.range
+        else:
+            self._base_range = CodeRange({}, self.loc, self.loc)
+
+    def _resolve_function_name(self, ast: ASTEntry) -> str:
+        curr = ast
+        while curr:
+            if curr.kind == "FunctionDecl":
+                return curr.data["name"]
+            curr = curr.parent
+        return "(global scope)"
+
 
     @property
     def children(self) -> list[SAST]:
@@ -165,10 +177,7 @@ class SAST:
     # If only each ASTEntry had valid code range...
     def update_location_range(self):
         if not self.inner:
-            if self.ast.range:
-                self.loc_range = self.ast.range
-            else:
-                self.loc_range = CodeRange({}, self.loc, self.loc)
+            self.loc_range = self._base_range
         else:
             # TODO use max_loc and min_loc values instead
             min_line = sys.maxsize
@@ -258,17 +267,6 @@ class SAST:
         return ret
 
     def function_name(self) -> str:
-        if not self._function_name:
-            ast = self.ast
-            while ast:
-                if ast.kind == "FunctionDecl":
-                    self._function_name = ast.data["name"]
-                    break
-                else:
-                    ast = ast.parent
-            else:
-                # Must be global scope
-                self._function_name = "(global scope)"
         return self._function_name
 
 
@@ -599,16 +597,16 @@ class FCall(SAST):
         ret: list[SAST] = []
         for idx, arg in enumerate(self.args):
             ret.append(arg)
-            # Save location and AST for debugging value
-            self.inner[idx + 1] = FCallArg(arg.loc, arg.ast)
+            # Save location for debugging value
+            self.inner[idx + 1] = FCallArg(arg.loc)
         return ret
 
 
 class FCallArg(SAST):
     """Placeholder for functinal call argument, as we in fact are not interested in its value"""
 
-    def __init__(self, loc: CodeLoc, ast: ASTEntry):
-        self._derived_init_(loc, ast, [])
+    def __init__(self, loc: CodeLoc):
+        self._derived_init_(loc, None, [])
 
     def __repr__(self) -> str:
         return f"<FCallArg at {self.loc}>"
