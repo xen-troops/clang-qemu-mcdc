@@ -43,7 +43,7 @@ def filter_and_report(predicate, expressions: list[SAST],
 
 
 def filter_by_source(expressions: list[SAST]) -> list[SAST]:
-    return filter_and_report(lambda x: x.loc.file not in SOURCE_SKIP_LIST,
+    return filter_and_report(lambda x: x.loc is not None and x.loc.file not in SOURCE_SKIP_LIST,
                              expressions, "based on source location")
 
 

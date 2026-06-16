@@ -24,6 +24,8 @@ class CodeLoc:
         self.data = data
 
     def __eq__(self, other) -> bool:
+        if not isinstance(other, CodeLoc):
+            return False
         return self.file == other.file and self.col == other.col and self.line == other.line
 
     def __repr__(self) -> str:
