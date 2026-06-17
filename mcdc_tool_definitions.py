@@ -236,8 +236,10 @@ class SAST:
 
     def is_const(self) -> bool:
         if self._is_const == None:
-            self._is_const = all((i._is_const == True for i in self.inner))
-
+            if self.inner:
+                self._is_const = all((i.is_const() for i in self.inner))
+            else:
+                self._is_const = False
         return self._is_const
 
     def is_var(self) -> bool:

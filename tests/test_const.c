@@ -44,6 +44,12 @@ void test_const_expressions(void)
 	while (sizeof(char) == 1)
 		return;
 
+	while (!(sizeof(char) != sizeof(int)))
+		return;
+
+	while ( (1 << sizeof(char)) > 8)
+		return;
+
 	function_that_accepts_bool (2 > 3);
 }
 
