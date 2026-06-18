@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import argparse
 from pprint import pprint
@@ -8,6 +9,7 @@ import pickle
 
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr
+from mcdc_tool_s_loc import SFileLocMap, get_s_file_locations
 
 
 def filter_same_expr(expressions: list[SAST]):
@@ -55,14 +57,20 @@ def filter_const_expr(expressions: list[SAST]):
                              "because they were const expressions")
 
 
-def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
+def get_bool_expr_list(
+        compile_commands: str
+    ) -> tuple[list[BoolExpression], dict[str, list[SFileLocMap]]]:
     compilation_db = open(compile_commands, "rt")
     db = json.load(compilation_db)
     seen = []
 
     bool_expr: list[BoolExpression] = []
+    inline_loc_map: dict[str, list[SFileLocMap]] = {}
     for entry in db:
         f: str = entry["file"]
+        work_dir: str = entry.get("directory", os.getcwd())
+        rel_f: str = os.path.relpath(f, work_dir)
+
         if not f.endswith(".c"):
             continue
         if f.startswith("tools/"):
@@ -73,11 +81,12 @@ def get_bool_expr_list(compile_commands: str) -> list[BoolExpression]:
         if f in seen:
             continue
         seen.append(f)
-        expr = handle_file(f, args)
+        expr, locs = handle_file(f, args)
         for e in expr:
             assert isinstance(e, BoolExpression)
         bool_expr.extend(expr)
-    return bool_expr
+        inline_loc_map[rel_f] = locs
+    return bool_expr, inline_loc_map
 
 def lift_up_fcalls(expressions: list[SAST]):
     subexpr = []
@@ -93,14 +102,13 @@ def main():
     parser = argparse.ArgumentParser(description="MC/DC AST Parser")
 
     parser.add_argument(
-        "input_source",
-        help="Path to the source .c file"
-    )
-
-    parser.add_argument(
         "output_pickle",
         help="Path to save the generated mcdc.pickle"
     )
+
+    parser.add_argument("output_inlines_pickle",
+                        help="Path to save the generated inline locations pickle")
+
     parser.add_argument(
         "compile_commands",
         help="Path to the compile_commands.json file"
@@ -108,7 +116,7 @@ def main():
 
     args = parser.parse_args()
 
-    expressions = get_bool_expr_list(args.compile_commands)
+    expressions, inline_loc_map = get_bool_expr_list(args.compile_commands)
 
     lift_up_fcalls(expressions)
     expressions = filter_const_expr(expressions)
@@ -123,29 +131,71 @@ def main():
     with open(args.output_pickle, "wb") as f:
         pickle.dump(expressions, f)
 
+    with open(args.output_inlines_pickle, "wb") as f:
+        pickle.dump(inline_loc_map, f)
 
-def handle_file(fname: str, args: list[str]):
-
+def get_bool_expr_per_file(fname: str, args: list[str]):
     def object_hook(data: dict):
         if "kind" in data:
             return ASTEntry(data)
         return data
 
     print(f"Parsing '{fname}'")
-    if "-save-temps" in args:
-        args.remove("-save-temps")
-    args.append("-Xclang")
-    args.append("-ast-dump=json")
-    args.append("-fsyntax-only")
-    if "-o" in args:
-        pos = args.index("-o")
-        del args[pos:pos+1]
-    print(args)
-    result = subprocess.run(args, capture_output=True, check=True)
+
+    ast_args = args.copy()
+
+    if "-save-temps" in ast_args:
+        ast_args.remove("-save-temps")
+    ast_args.append("-Xclang")
+    ast_args.append("-ast-dump=json")
+    ast_args.append("-fsyntax-only")
+    if "-o" in ast_args:
+        pos = ast_args.index("-o")
+        del ast_args[pos:pos+1]
+    print(ast_args)
+    result = subprocess.run(ast_args, capture_output=True, check=True)
     data = json.loads(result.stdout, object_hook=object_hook)
     data.update_locations(fname, 1)
     bool_expressions = deep_dive(data)
     return bool_expressions
+
+
+def get_inline_loc(fname: str, args: list[str]):
+    asm_args = args.copy()
+
+    flags_to_remove = ["-c", "-save-temps", "-save-temps=obj"]
+    for flag in flags_to_remove:
+        while flag in asm_args:
+            asm_args.remove(flag)
+
+    asm_file = fname.rsplit('.', 1)[0] + ".s"
+
+    if "-o" in asm_args:
+        idx = asm_args.index("-o")
+        out_path = asm_args.pop(idx + 1) if idx + 1 < len(asm_args) else ""
+        asm_args.remove("-o")
+
+        if out_path.endswith(".o"):
+            asm_file = out_path[:-2] + ".s"
+
+    asm_args.extend(["-o", asm_file])
+    if "-S" not in asm_args:
+        asm_args.append("-S")
+
+    subprocess.run(asm_args, capture_output=True, check=True)
+
+    inline_loc = get_s_file_locations(asm_file)
+    return inline_loc
+
+
+def handle_file(
+        fname: str, args: list[str]) -> tuple[list[SAST], list[SFileLocMap]]:
+
+    bool_expressions = get_bool_expr_per_file(fname, args)
+
+    inline_locs = get_inline_loc(fname, args)
+
+    return bool_expressions, inline_locs
 
 
 def deep_dive(ast: ASTEntry) -> list[SAST]:
