@@ -10,6 +10,7 @@ TEST_BINS = $(TEST_SRCS:.c=)
 TEST_ASMS = $(TEST_SRCS:.c=.s)
 
 MCDC_PICKLES = $(TEST_BINS:%=%_mcdc.pickle)
+INLINE_PICKLES = $(TEST_BINS:%=%_inlines.pickle)
 COMMANDS_JSONS = $(TEST_BINS:%=%_compile_commands.json)
 DWARF_PICKLES = $(TEST_BINS:%=%_mcdc-dwarf.pickle)
 PLUGIN_CONFS = $(TEST_BINS:%=%_plugin.conf)
@@ -37,16 +38,13 @@ tests/%.o tests/%_compile_commands.json: tests/%.c Makefile
 tests/%: tests/%.o
 	clang $(CFLAGS) -static $< -o $@
 
-tests/%.s: tests/%.c
-	clang $(CFLAGS) -static $< -S -o $@
-
-tests/%_mcdc.pickle: tests/%.c tests/%.o mcdc_tool_parser.py mcdc_tool_definitions.py
-	python mcdc_tool_parser.py $< $@ tests/$*_compile_commands.json
+tests/%_mcdc.pickle tests/%_inlines.pickle: tests/%.o mcdc_tool_parser.py mcdc_tool_definitions.py
+	python mcdc_tool_parser.py tests/$*_mcdc.pickle tests/$*_inlines.pickle tests/$*_compile_commands.json
 
 mcdc.pickle: test2.c test2_helpers.c mcdc_tool_parser.py mcdc_tool_definitions.py
 	python mcdc_tool_parser.py
 
-tests/%_mcdc-dwarf.pickle tests/%_plugin.conf: tests/% tests/%_mcdc.pickle tests/%.s mcdc_tool_dwarf.py
+tests/%_mcdc-dwarf.pickle tests/%_plugin.conf: tests/% tests/%_mcdc.pickle mcdc_tool_dwarf.py
 	python mcdc_tool_dwarf.py $< tests/$*_mcdc.pickle tests/$*_mcdc-dwarf.pickle tests/$*_plugin.conf
 
 tests/%_brtrace.dat: tests/% tests/%_plugin.conf
@@ -76,6 +74,6 @@ check: $(LCOV_INFOS) mcdc_report_compare.py
 	fi
 
 clean:
-	rm -f tests/*.o $(TEST_BINS) $(TEST_ASMS) $(MCDC_PICKLES) $(DWARF_PICKLES) $(PLUGIN_CONFS) $(COMMANDS_JSONS)
+	rm -f tests/*.o $(TEST_BINS) $(TEST_ASMS) $(MCDC_PICKLES) $(DWARF_PICKLES) $(PLUGIN_CONFS) $(COMMANDS_JSONS) $(INLINE_PICKLES)
 	rm -f $(TRACE_BINS) $(LCOV_INFOS) brtrace.dat
 	rm -rf coverage-report/
