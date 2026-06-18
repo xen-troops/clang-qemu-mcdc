@@ -45,7 +45,7 @@ mcdc.pickle: test2.c test2_helpers.c mcdc_tool_parser.py mcdc_tool_definitions.p
 	python mcdc_tool_parser.py
 
 tests/%_mcdc-dwarf.pickle tests/%_plugin.conf: tests/% tests/%_mcdc.pickle mcdc_tool_dwarf.py
-	python mcdc_tool_dwarf.py $< tests/$*_mcdc.pickle tests/$*_mcdc-dwarf.pickle tests/$*_plugin.conf
+	python mcdc_tool_dwarf.py $< tests/$*_mcdc.pickle tests/$*_inlines.pickle tests/$*_mcdc-dwarf.pickle tests/$*_plugin.conf
 
 tests/%_brtrace.dat: tests/% tests/%_plugin.conf
 	@echo ">> Running $< in QEMU..."

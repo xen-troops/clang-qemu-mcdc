@@ -335,15 +335,14 @@ def _get_next_expr_for_processing(
 
 
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
-               expressions: list[SAST]) -> list[TracePoint]:
+               expressions: list[SAST],
+               s_file_locs: list[SFileLocMap]) -> list[TracePoint]:
     cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
     if os.path.basename(cu_name) in ("unwind-dw2.c", "unwind-dw2-fde-dip.c",
                                      "__aarch64_have_sme.c", "unwind-c.c"):
         # Nothing good in libgcc internals
         return []
     TRACE_CU(f"Handling compile unit {cu_name}")
-    s_file_name = os.path.splitext(cu_name)[0] + ".s"
-    s_file_locs = get_s_file_locations(s_file_name)
     dwarf_locs = parse_locs(cu, s_file_locs)
     ret: list[TracePoint] = []
     inlines = _collect_inlines(cu)
@@ -364,7 +363,9 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
     return ret
 
 
-def process_elf(fname: str, expressions: list[SAST], out_dwarf_pickle: str,
+def process_elf(fname: str, expressions: list[SAST],
+                inline_map: dict[str, list[SFileLocMap]],
+                out_dwarf_pickle: str,
                 out_plugin_conf: str):
     f = open(fname, "rb")
     elffile = ELFFile(f)
@@ -377,7 +378,11 @@ def process_elf(fname: str, expressions: list[SAST], out_dwarf_pickle: str,
     ret: list[ExprTraceInfo] = []
 
     for cu in dwarfinfo.iter_CUs():
-        ret.extend(process_cu(cu, elffile, dis, expressions))
+        cu_name = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
+
+        cu_inlines = inline_map.get(cu_name, [])
+
+        ret.extend(process_cu(cu, elffile, dis, expressions, cu_inlines))
 
     print(f"Created {len(ret)} tracepoint objects")
     with open(out_plugin_conf, "wt") as out:
@@ -1133,10 +1138,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 #        locations.
 
 
-def load_mcdc_data(filepath: str) -> list[SAST]:
-    with open(filepath, "rb") as f:
-        expressions: SAST = pickle.load(f)
-        return expressions
+def load_mcdc_data(expr_file: str,
+                   inline_loc: str
+                ) -> tuple[list[SAST], dict[str, list[SFileLocMap]]]:
+    expr: list[BoolExpression] = []
+    inline_loc_map: dict[str, list[SFileLocMap]] = {}
+
+    with open(expr_file, "rb") as f:
+        expr = pickle.load(f)
+
+    with open(inline_loc, "rb") as f:
+        inline_loc_map = pickle.load(f)
+
+    return expr, inline_loc_map
 
 
 def main():
@@ -1149,6 +1163,9 @@ def main():
     parser.add_argument(
         "input_pickle",
         help="Path to the generated pickle file with AST classes")
+    parser.add_argument(
+        "inline_pickle",
+        help="Path to the generated pickle with inline locations")
     parser.add_argument("output_pickle",
                         help="Path to pickle file to save ExpressionInfo data")
     parser.add_argument("out_plugin_conf",
@@ -1156,9 +1173,8 @@ def main():
 
     args = parser.parse_args()
 
-    mcdc_data = load_mcdc_data(args.input_pickle)
-
-    process_elf(args.executable, mcdc_data, args.output_pickle,
+    mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle, args.inline_pickle)
+    process_elf(args.executable, mcdc_data, iniline_loc, args.output_pickle,
                 args.out_plugin_conf)
 
 
