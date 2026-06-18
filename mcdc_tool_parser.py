@@ -153,6 +153,9 @@ def get_bool_expr_per_file(fname: str, args: list[str]):
     if "-c" in ast_args:
         ast_args.remove("-c")
 
+    if "-S" in ast_args:
+        ast_args.remove("-S")
+
     if "-o" in ast_args:
         pos = ast_args.index("-o")
         del ast_args[pos:pos+2]
@@ -167,7 +170,7 @@ def get_bool_expr_per_file(fname: str, args: list[str]):
 def get_inline_loc(fname: str, args: list[str]):
     asm_args = args.copy()
 
-    flags_to_remove = ["-c", "-save-temps", "-save-temps=obj"]
+    flags_to_remove = ["-c", "-save-temps", "-save-temps=obj", "-S"]
     for flag in flags_to_remove:
         while flag in asm_args:
             asm_args.remove(flag)
