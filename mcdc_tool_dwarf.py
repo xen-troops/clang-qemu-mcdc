@@ -702,8 +702,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def match_optional_store(state: MatchState) -> MatchState:
         if state.instr_idx >= len(instructions) - 1:
             return state
-        if instructions[state.instr_idx].mnemonic == "mov" and instructions[
-                state.instr_idx + 1].mnemonic == "str":
+        if (instructions[state.instr_idx].mnemonic == "mov"
+                or instructions[state.instr_idx].mnemonic == "movz"
+            ) and instructions[state.instr_idx + 1].mnemonic == "str":
             state.instr_idx += 2
         return state
 
