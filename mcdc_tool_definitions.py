@@ -694,6 +694,7 @@ class NullOp(SAST):
 
     def __init__(self, loc: CodeLoc, ast: ASTEntry):
         self._derived_init_(loc, ast, [])
+        self._is_const = True
 
     def __repr__(self) -> str:
         return f"(NullOp at {self.loc})"
