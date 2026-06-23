@@ -149,9 +149,13 @@ def get_bool_expr_per_file(fname: str, args: list[str]):
     ast_args.append("-Xclang")
     ast_args.append("-ast-dump=json")
     ast_args.append("-fsyntax-only")
+
+    if "-c" in ast_args:
+        ast_args.remove("-c")
+
     if "-o" in ast_args:
         pos = ast_args.index("-o")
-        del ast_args[pos:pos+1]
+        del ast_args[pos:pos+2]
     print(ast_args)
     result = subprocess.run(ast_args, capture_output=True, check=True)
     data = json.loads(result.stdout, object_hook=object_hook)
