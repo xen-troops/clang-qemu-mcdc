@@ -418,13 +418,33 @@ class BoolExpression(SAST):
         return True
 
     def get_leafs(self) -> list[BoolExpression]:
+        # Arithmetic comparisons are always leafs
+        if self.op in (BoolExpression.OP_EQ, BoolExpression.OP_XOR,
+                       BoolExpression.OP_GE, BoolExpression.OP_GT,
+                       BoolExpression.OP_LE, BoolExpression.OP_LT):
+            return [self]
+
         ret: list[BoolExpression] = []
-        ret.extend(self.a.get_leafs())
-        if self.op != BoolExpression.OP_NOT and self.op != BoolExpression.OP_IMPLICIT_CAST:
-            ret.extend(self.b.get_leafs())
-        if not ret:
+        leafs_a = self.a.get_leafs()
+        leafs_b = []
+        b_present = self.op not in (BoolExpression.OP_NOT,
+                                    BoolExpression.OP_IMPLICIT_CAST)
+        if b_present:
+            leafs_b = self.b.get_leafs()
+
+        if not leafs_a and not leafs_b:
             # We are the leaf
             return [self]
+        else:
+            if leafs_a:
+                ret.extend(leafs_a)
+            else:
+                ret.append(self.a)
+            if b_present:
+                if leafs_b:
+                    ret.extend(leafs_b)
+                else:
+                    ret.append(self.b)
         return ret
 
     def get_decisions(self) -> list[BoolExpression]:
