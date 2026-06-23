@@ -628,7 +628,9 @@ def match_branch_isntr(instr: capstone.CsInsn, mnemonic: str):
 
 def match_sub_instr(instr: capstone.CsInsn, target_reg, const):
     if instr.mnemonic != "subs":
-        raise MatchError(f"Expected opcode 'subs' found {instr.mnemonic}")
+        raise MatchError(
+            f"Expected opcode 'subs' found {instr.mnemonic} at {instr.address:x} (match_sub_instr)"
+        )
 
 
 #    match_instr_reg_operand(instr, 0, target_reg)
@@ -638,7 +640,9 @@ def match_sub_instr(instr: capstone.CsInsn, target_reg, const):
 
 def match_sub_instr_regs(instr: capstone.CsInsn, reg1, reg2):
     if instr.mnemonic != "subs":
-        raise MatchError(f"Expected opcode 'subs' found {instr.mnemonic}")
+        raise MatchError(
+            f"Expected opcode 'subs' found {instr.mnemonic} at {instr.address:x} (match_sub_instr_regs)"
+        )
 
     match_instr_reg_operand(instr, 1, reg1)
     match_instr_reg_operand(instr, 2, reg2)
@@ -702,9 +706,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def match_optional_store(state: MatchState) -> MatchState:
         if state.instr_idx >= len(instructions) - 1:
             return state
-        if (instructions[state.instr_idx].mnemonic == "mov"
-                or instructions[state.instr_idx].mnemonic == "movz"
-            ) and instructions[state.instr_idx + 1].mnemonic == "str":
+        if instructions[state.instr_idx].mnemonic in ("mov", "movz") \
+        and instructions[state.instr_idx + 1].mnemonic in ("str", "stur"):
             state.instr_idx += 2
         return state
 
@@ -827,19 +830,37 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         raise Exception(f"Unknown var op {v.loc_expr.op_name}")
             case IntLiteral():
                 TRACE_MATCH(
-                    f"Handling int const '{operand.value}' for reg {state.target_reg}"
+                    f"Handling int const '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
                 )
+                instr = instructions[state.instr_idx]
                 if operand.value == 0:
-                    # Clang can generate cbnz in that case
-                    if instructions[state.instr_idx].mnemonic == "cbnz":
+                    if instr.mnemonic == "cbnz":
                         # Let caller handle that case
                         return state
-                    if instructions[state.instr_idx].mnemonic == "cbz":
+                    if instr.mnemonic == "cbz":
                         # Let caller handle that case
                         return state
-                match_sub_instr(instructions[state.instr_idx],
-                                state.target_reg, operand.value)
-                return MatchState(state.instr_idx + 1, state.target_reg)
+                match instructions[state.instr_idx].mnemonic:
+                    case "subs":
+                        match_sub_instr(instructions[state.instr_idx],
+                                        state.target_reg, operand.value)
+                        return MatchState(state.instr_idx + 1,
+                                          state.target_reg)
+                    case "mov":
+                        match_instr_const_operand(instr, 1, operand.value)
+                        return MatchState(state.instr_idx + 1,
+                                          get_instr_reg_operand(instr, 0))
+                    case "asr":
+                        match_instr_const_operand(instr, 2, operand.value)
+                        return MatchState(state.instr_idx + 1,
+                                          get_instr_reg_operand(instr, 0))
+                    case "ands":
+                        match_instr_const_operand(instr, 2, operand.value)
+                        return MatchState(state.instr_idx + 1,
+                                          get_instr_reg_operand(instr, 0))
+                    case mnemonic:
+                        raise MatchError(
+                            f"Don't know how to handle {mnemonic}")
             case BoolExpression():
                 return recurse(operand, state)
             case ArraySubscript():
@@ -859,12 +880,74 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return handle_fcall(operand, state)
             case NonBoolExpression():
                 new_state = handle_operand(operand.operands[0], state)
-                return MatchState(new_state.instr_idx + 1,
-                                  new_state.target_reg, True)
+                return MatchState(new_state.instr_idx, new_state.target_reg,
+                                  True)
                 pass
             case _:
                 raise Exception(
                     f"Don't know what to do with operand {operand}")
+
+    def handle_and_or(e: BoolExpression, state: MatchState) -> MatchState:
+        new_state = handle_operand(e.a, state)
+        new_state = match_optional_store(new_state)
+        match instructions[new_state.instr_idx].mnemonic:
+            case "tbz":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address, True,
+                               e.a))
+                new_state.instr_idx += 2
+            case "tbnz":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               False, e.a))
+                new_state.instr_idx += 2
+            case "cbz":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               False, e.a))
+                new_state.instr_idx += 2
+            case "cbnz":
+                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                ret.append(
+                    TracePoint(instructions[new_state.instr_idx].address,
+                               False, e.a))
+                new_state.instr_idx += 2
+            case mnemonic:
+                TRACE_MATCH(
+                    f"Skipping {mnemonic} at {instructions[new_state.instr_idx].address:x}"
+                )
+
+        new_state = handle_operand(e.b, new_state)
+        new_state = match_optional_store(new_state)
+        if isinstance(e.b, BoolVar):
+            match instructions[new_state.instr_idx].mnemonic:
+                case "tbz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                       "b")
+                    ret.append(
+                        TracePoint(instructions[new_state.instr_idx].address,
+                                   True, e.b))
+                    new_state.instr_idx += 2
+                case "tbnz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1],
+                                       "b")
+                    ret.append(
+                        TracePoint(instructions[new_state.instr_idx].address,
+                                   False, e.b))
+                    new_state.instr_idx += 2
+                case mnemonic:
+                    TRACE_MATCH(
+                        f"Didn't found conditional op, instead got  {mnemonic} at {instructions[new_state.instr_idx].address:x}"
+                    )
+                    ret.append(
+                        TracePoint(instructions[new_state.instr_idx].address,
+                                   False, e.b))
+                    new_state.instr_idx += 1
+
+        return new_state
 
     def handle_lt_gt_op(e: BoolExpression, state: MatchState) -> MatchState:
         # TODO: Handle differences in LT, LE, GT, GE
@@ -931,6 +1014,46 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         return MatchState(new_state.instr_idx + 2)
 
     @fuzzy_matcher
+    def handle_implicit_cast_tail(e: BoolExpression,
+                                  state: MatchState) -> MatchState:
+        match instructions[state.instr_idx].mnemonic:
+            case "tbz" | "cbz" | "cbnz" | "tbnz":
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e))
+                return MatchState(state.instr_idx + 1)
+            case "csel" | "csinc":
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e))
+                return MatchState(state.instr_idx + 1)
+            case mnemonic:
+                raise MatchError(
+                    f"Don't know how to handle implicit bool cast instruction {mnemonic}"
+                )
+
+    @fuzzy_matcher
+    def handle_op_not_tail(e: BoolExpression, state: MatchState) -> MatchState:
+        # Return early if we are not trying to handle top-level NOT expression
+        if e != expr or expr.op != BoolExpression.OP_NOT:
+            return state
+
+        match instructions[state.instr_idx].mnemonic:
+            case "cbnz" | "cset":
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e.a))
+            case "eor":
+                # TODO: This is not a branch instruction, but this is best we can get
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e.a))
+            case mnemonic:
+                raise MatchError(
+                    f"Don't know how to handle {mnemonic} (OP_NOT)")
+        return state
+
+    @fuzzy_matcher
     def recurse(e: BoolExpression, state: MatchState) -> MatchState:
         TRACE_MATCH(f"Recurse, handling {e} at {e.loc}")
         assert isinstance(e, BoolExpression)
@@ -940,7 +1063,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = match_optional_store(new_state)
                 new_state = match_optional_bool_cast(new_state)
                 new_state = handle_operand(e.b, new_state)
+                new_state = match_optional_bool_cast(new_state)
                 idx = new_state.instr_idx
+                # Optional subs:
+                if instructions[idx].mnemonic == "subs":
+                    idx += 1
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
                     idx += 1
@@ -985,9 +1112,20 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 op1_state = match_optional_bool_cast(op1_state)
                 op2_state = handle_operand(e.b, op1_state)
                 op2_state = match_optional_bool_cast(op2_state)
-                instr = instructions[op2_state.instr_idx]
-                match_sub_instr_regs(instr, op1_state.target_reg,
-                                     op2_state.target_reg)
+
+                if isinstance(
+                        e.b,
+                        IntLiteral) and instructions[op2_state.instr_idx -
+                                                     1].mnemonic == "subs":
+                    TRACE_MATCH("Fixing up return from IntLiteral handler")
+                    op2_state.instr_idx -= 1
+                    instr = instructions[op2_state.instr_idx]
+                    match_sub_instr(instr, op1_state.target_reg, e.b.value)
+                else:
+                    instr = instructions[op2_state.instr_idx]
+                    match_sub_instr_regs(instr, op1_state.target_reg,
+                                         op2_state.target_reg)
+
                 new_state = MatchState(op2_state.instr_idx + 1,
                                        get_instr_reg_operand(instr, 0))
                 inverted = False
@@ -995,42 +1133,23 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
                     idx += 1
-                if instructions[idx].mnemonic == "cset":
-                    pass
-                elif instructions[idx].mnemonic == "b.eq":
-                    inverted = True
-                    match_branch_isntr(instructions[idx], "b.eq")
-                    match_branch_isntr(instructions[idx + 1], "b")
-                elif instructions[idx].mnemonic == "b.ne":
-                    match_branch_isntr(instructions[idx + 1], "b")
-                elif instructions[idx].mnemonic == "cbz":
-                    inverted = True
-                    match_branch_isntr(instructions[idx + 1], "b")
-                else:
-                    match_branch_isntr(instructions[idx + 1], "cbnz")
-                    match_branch_isntr(instructions[idx + 1], "b")
+                match instructions[idx].mnemonic:
+                    case "cset":
+                        pass
+                    case "b.eq":
+                        inverted = True
+                        match_branch_isntr(instructions[idx + 1], "b")
+                    case "b.ne":
+                        match_branch_isntr(instructions[idx + 1], "b")
+                    case "cbz":
+                        inverted = True
+                        match_branch_isntr(instructions[idx + 1], "b")
+                    case "cbnz":
+                        match_branch_isntr(instructions[idx + 1], "b")
+                    case mnemonic:
+                        raise MatchError(
+                            f"Can't match {mnemonic} instruction (OP_XOR)")
                 ret.append(TracePoint(instructions[idx].address, inverted, e))
-                ret.append(TracePoint(instructions[idx].address, inverted, e))
-                return MatchState(idx + 2)
-            case BoolExpression.OP_OR:
-                new_state = handle_operand(e.a, state)
-                new_state = match_optional_store(new_state)
-                inverted = False
-                if instructions[new_state.instr_idx].mnemonic == "tbnz":
-                    match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                       "b")
-                    ret.append(
-                        TracePoint(instructions[new_state.instr_idx].address,
-                                   False, e.a))
-                    new_state.instr_idx += 2
-                elif instructions[new_state.instr_idx].mnemonic == "tbz":
-                    match_branch_isntr(instructions[new_state.instr_idx + 1],
-                                       "b")
-                    ret.append(
-                        TracePoint(instructions[new_state.instr_idx].address,
-                                   True, e.a))
-                    new_state.instr_idx += 2
-                new_state = handle_operand(e.b, new_state)
                 if isinstance(e.b, BoolVar):
                     if instructions[new_state.instr_idx].mnemonic == "tbz":
                         match_branch_isntr(
