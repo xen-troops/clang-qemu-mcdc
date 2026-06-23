@@ -208,7 +208,9 @@ def deep_dive(ast: ASTEntry) -> list[SAST]:
             "ForStmt",
             "WhileStmt",
             "DoStmt",
-            "IfStmt"
+            "IfStmt",
+            "ConditionalOperator",
+            "BinaryConditionalOperator",
     ]:
         r = handle_expression(ast)
         ret.extend(r)
