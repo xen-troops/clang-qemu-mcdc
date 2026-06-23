@@ -348,16 +348,16 @@ def handle_expression(ast: ASTEntry) -> SAST:
                                    recurse(ast.inner[1]), ast)
             case "IfStmt" | "WhileStmt" | "ConditionalOperator" | "BinaryConditionalOperator":
                 rest = [recurse(inner) for inner in ast.inner[1:]]
-                return FlowControlStructure(ast.get_loc, recurse(ast.inner[0]), rest, ast)
+                return FlowControlStructure(ast.get_loc(), recurse(ast.inner[0]), rest, ast)
             case "DoStmt":
                 rest = [recurse(inner) for inner in ast.inner[0:-1]]
-                return FlowControlStructure(ast.get_loc, recurse(ast.inner[-1]), rest, ast)
+                return FlowControlStructure(ast.get_loc(), recurse(ast.inner[-1]), rest, ast)
             case "ForStmt":
                 rest = []
                 for idx, item in enumerate(ast.inner):
                     if idx != 2 and item:
                         rest.append(recurse(item))
-                return FlowControlStructure(ast.get_loc, recurse(ast.inner[2]), rest, ast)
+                return FlowControlStructure(ast.get_loc(), recurse(ast.inner[2]), rest, ast)
 
 
             case "CompoundStmt" | "ReturnStmt":
