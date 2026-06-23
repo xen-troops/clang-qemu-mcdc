@@ -296,10 +296,10 @@ def _get_addr_ranges_for_expr(
                 ret.extend(r)
     else:
         # Easy mode
-        for loc in locations:
+        for idx, loc in enumerate(locations):
             if _loc_is_in_expr(expr, loc):
                 # Always update end_loc
-                end_loc = loc
+                end_loc = locations[idx + 1]
                 if not start_loc:
                     start_loc = loc
 
