@@ -331,7 +331,7 @@ def _get_next_expr_for_processing(
     for expr in expressions:
         ranges = _get_addr_ranges_for_expr(expr, locs, inlines)
         for r in ranges:
-            yield ExprAddressData(expr, r[0], r[1] + 16)
+            yield ExprAddressData(expr, r[0], r[1] + 24)
 
 
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis,
