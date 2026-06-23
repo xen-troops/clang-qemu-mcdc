@@ -21,7 +21,7 @@ LCOV_INFOS   = $(TEST_BINS:%=%_coverage.info)
 REFERENCE_INFOS = $(TEST_BINS:%=%_reference.info)
 
 QEMU         ?= qemu-aarch64
-QEMU_PLUGIN  ?= libbrtrace.so
+QEMU_PLUGIN  ?= qemu-plugin/libbrtrace.so
 SYSROOT      ?= /usr/aarch64-linux-gnu
 
 CFLAGS =  -g -O0
