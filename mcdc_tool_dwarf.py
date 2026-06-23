@@ -1133,6 +1133,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     pprint(ret)
     return ExprTraceInfo(expr, ret)
 
+    # Check that we are returning sane data
+    assert len(ret) == len(expr.get_leafs())
 
 #    for expr in expressions:
 #        loc = expr.loc
