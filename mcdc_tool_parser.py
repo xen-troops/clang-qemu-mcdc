@@ -8,7 +8,7 @@ import subprocess
 import pickle
 
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr, EnumConst
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr, EnumConst, StatementExpression, CompoundStmt
 from mcdc_tool_s_loc import SFileLocMap, get_s_file_locations
 
 
@@ -164,6 +164,11 @@ def get_bool_expr_per_file(fname: str, args: list[str]):
     data = json.loads(result.stdout, object_hook=object_hook)
     data.update_locations(fname, 1)
     bool_expressions = deep_dive(data)
+
+    print("Running simplification pass...")
+    for expr in bool_expressions:
+        expr.simplify()
+
     return bool_expressions
 
 
@@ -366,11 +371,16 @@ def handle_expression(ast: ASTEntry) -> SAST:
                         rest.append(recurse(item))
                 return FlowControlStructure(ast.get_loc(), recurse(ast.inner[2]), rest, ast)
 
-
-            case "CompoundStmt" | "ReturnStmt":
+            case "StmtExpr":
+                if len(ast.inner) != 1:
+                    raise Exception(f"Unexpected amount of inner entries: {len(ast.inner)}")
+                return StatementExpression(ast.loc, recurse(ast.inner[0]), ast)
+            case "CompoundStmt":
+                return CompoundStmt(ast.loc, [recurse(inner) for inner in ast.inner], ast)
+            case "ReturnStmt":
                 return MiscExpr(ast.loc, ast, [recurse(inner) for inner in ast.inner])
 
-            case "StmtExpr" | "VarDecl"  | "DeclStmt" | \
+            case  "VarDecl"  | "DeclStmt" | \
                 "SwitchStmt" | "CaseStmt" | "DefaultStmt" | \
                 "LabelStmt" | "OpaqueValueExpr" | "InitListExpr" | \
                 "CompoundLiteralExpr" | "VAArgExpr" :

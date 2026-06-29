@@ -282,6 +282,18 @@ class SAST:
             ret.extend(ch.get_topmost_bool_expr())
         return ret
 
+    def simplify(self):
+        # Do simplification passes.
+        for idx, ch in enumerate(self.inner):
+            ch.simplify()
+            # For StatementExpression replace it with its return expression
+            if isinstance(ch, StatementExpression):
+                self.inner[idx] = ch.ret_expr
+
+            # For c-style cast - replace with value that is casted
+            if isinstance(ch, CCast):
+                self.inner[idx] = ch.casted
+
     def function_name(self) -> str:
         return self._function_name
 
@@ -720,6 +732,38 @@ class CCast(SAST):
     @property
     def casted(self):
         return self.inner[0]
+
+class StatementExpression(SAST):
+
+    def __init__(self, loc: CodeLoc, inner: SAST, ast: ASTEntry):
+        if not isinstance(inner, CompoundStmt):
+            raise Exception(f"Expected compound statement inside, got {type(inner)}")
+        self._derived_init_(loc, ast, [inner])
+
+    def __repr__(self) -> str:
+        return f"<StmtExpr ({self.inner[0]})>"
+
+    @property
+    def ret_expr(self):
+        return self.inner[0]
+
+    def simplify(self):
+        for idx, ch in enumerate(self.inner):
+            ch.simplify()
+            assert isinstance(ch, CompoundStmt)
+            self.inner[idx] = ch.ret_expr
+
+class CompoundStmt(SAST):
+
+    def __init__(self, loc: CodeLoc, inner: [SAST], ast: ASTEntry):
+        self._derived_init_(loc, ast, inner)
+
+    def __repr__(self) -> str:
+        return f"<CompoundStmt ({self.inner})>"
+
+    @property
+    def ret_expr(self):
+        return self.inner[-1]
 
 
 class NullOp(SAST):
