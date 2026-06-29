@@ -26,6 +26,9 @@ def get_s_file_locations(fname: str) -> list[SFileLocMap]:
         line = line.strip()
         if not line.startswith(".loc"):
             continue
+        # This is stupid. Maybe it is time to switch to regexes
+        if line.startswith(".local"):
+            continue
         pos = line.find("// ")
         line = line[pos+3:]
         locs = _parse_nested_locs(line)
