@@ -8,6 +8,7 @@ TEST_SRCS = \
 	tests/test_builtins.c \
 	tests/test_nop.c \
 	tests/test_enum.c \
+	tests/test_goto.c \
 
 
 TEST_BINS = $(TEST_SRCS:.c=)

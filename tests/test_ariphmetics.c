@@ -91,11 +91,16 @@ int test_ariphmetic_12(int a, int b)
     return c;
 }
 
-int test_var_assign(int a)
+int test_ariphmetic_13(int a)
 {
     bool var = !!(a / 2);
 
     return var;
+}
+
+int test_ariphmetic_14(int a)
+{
+    return !(a & 0x1);
 }
 
 int main()
@@ -134,6 +139,9 @@ int main()
     test_ariphmetic_12(0x1, 0x2);
 
 
-    test_var_assign(2);
-    test_var_assign(3);
+    test_ariphmetic_13(2);
+    test_ariphmetic_13(3);
+
+    test_ariphmetic_14(5);
+    test_ariphmetic_14(2);
 }
