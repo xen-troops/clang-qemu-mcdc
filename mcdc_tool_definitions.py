@@ -12,8 +12,15 @@ class CodeLoc:
 
     def __init__(self, data: dict):
         if "expansionLoc" in data:
-            data = data["expansionLoc"]
-            self.kind = "Exp"
+            is_macro = "isMacroArgExpansion" in data["expansionLoc"]
+            file_exp = data["expansionLoc"].get("file")
+            file_spel = data["spellingLoc"].get("file")
+            if is_macro and (file_exp == file_spel or file_spel == None):
+                data = data["spellingLoc"]
+                self.kind = "Spl"
+            else:
+                data = data["expansionLoc"]
+                self.kind = "Exp"
         else:
             self.kind = ""
         self.file = data.get("file")
@@ -199,7 +206,7 @@ class SAST:
 
                 if ch.loc.file != fname:
                     raise Exception(
-                        f"Sub-expresions resides in an other file: {fname} vs {ch.loc.fname}"
+                        f"Sub-expresion {ch} ({ch.loc}) of {self}({self.loc}) resides in an other file: {fname} vs {ch.loc.file}"
                     )
 
                 if ch.loc_range.begin is None or ch.loc_range.end is None:
