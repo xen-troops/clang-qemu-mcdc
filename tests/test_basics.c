@@ -21,6 +21,18 @@ int test_int_cmp(int a)
         if (a==3)
                 return a;
 
+        if (a > 512)
+                return a;
+
+        if (a < 512)
+                return a;
+
+        if (a > 0)
+                return a;
+
+        if (a < 0)
+                return a;
+
         return 0;
 }
 
@@ -98,6 +110,16 @@ int* simple_loop()
         return array;
 }
 
+#define NULL ((void*)0)
+void test_against_ptr()
+{
+	int x;
+	void *ptr = &x;
+
+	if (ptr != NULL)
+		return;
+}
+
 typedef unsigned long u64;
 
 void test_against_sizeof()
@@ -140,6 +162,8 @@ int main(int argc, char *argv[])
         test_and_or_cond_2(1, 1, 0, 0);
 
         simple_loop();
+
+	test_against_ptr();
 
 	test_against_sizeof();
 

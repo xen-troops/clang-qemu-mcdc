@@ -4,7 +4,11 @@ TEST_SRCS = \
 	tests/test_inlines.c \
 	tests/test_const.c \
 	tests/test_ariphmetics.c \
-	tests/test_func_calls.c
+	tests/test_func_calls.c \
+	tests/test_builtins.c \
+	tests/test_nop.c \
+	tests/test_enum.c \
+
 
 TEST_BINS = $(TEST_SRCS:.c=)
 TEST_ASMS = $(TEST_SRCS:.c=.s)
@@ -27,6 +31,7 @@ SYSROOT      ?= /usr/aarch64-linux-gnu
 CFLAGS =  -g -O0
 CFLAGS += -target aarch64-unknown-linux-gnu
 CFLAGS += -I /usr/aarch64-linux-gnu/include
+CFLAGS += -std=gnu99 -fno-common -fno-builtin
 
 .PHONY: all clean report check
 
