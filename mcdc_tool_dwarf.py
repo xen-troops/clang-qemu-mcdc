@@ -512,6 +512,21 @@ def get_variable_in_func(func_die: DIE,
 
     return best_match
 
+def get_sizeof(cu: CompileUnit, name: str) -> Optional[int]:
+    for child in cu.iter_DIEs():
+        match child.tag:
+            case "DW_TAG_base_type":
+                if child.attributes["DW_AT_name"].value.decode() == name:
+                    return child.attributes["DW_AT_byte_size"].value
+            case "DW_TAG_typedef":
+                if child.attributes["DW_AT_name"].value.decode() == name:
+                    die = child
+                    while die.tag == "DW_TAG_typedef":
+                        die = cu.get_DIE_from_refaddr(die.attributes["DW_AT_type"].value + cu.cu_offset)
+                    TRACE_MATCH(die)
+                    return die.attributes["DW_AT_byte_size"].value
+    return None
+
 
 class MatchError(Exception):
 
@@ -772,6 +787,39 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         state.partial = True
         return state
 
+    def handle_int_const(value: int, state: MatchState):
+        instr = instructions[state.instr_idx]
+        if value == 0 or value == 1:
+            if instr.mnemonic in ("cbnz", "cbz", "tbz", "tbnz"):
+                TRACE_MATCH(f"  found {instr.mnemonic}, passing control to caller")
+                # Let caller handle that case
+                return state
+        match instructions[state.instr_idx].mnemonic:
+            case "subs" | "adds":
+                # TODO: We need to simplify expressions first.
+                # Like <IntLiteral 8> * <IntLiteral 8> == <IntLiteral 64>
+                # match_sub_instr(instructions[state.instr_idx],
+                #                 state.target_reg, value)
+                return MatchState(state.instr_idx + 1,
+                                  state.target_reg)
+            case "mov":
+                # match_instr_const_operand(instr, 1, value)
+                return MatchState(state.instr_idx + 1,
+                                  get_instr_reg_operand(instr, 0))
+            case "asr":
+                # TODO: See above
+                # match_instr_const_operand(instr, 2, value)
+                return MatchState(state.instr_idx + 1,
+                                  get_instr_reg_operand(instr, 0))
+            case "ands":
+                # TODO: See above
+                # match_instr_const_operand(instr, 2, value)
+                return MatchState(state.instr_idx + 1,
+                                  get_instr_reg_operand(instr, 0))
+            case mnemonic:
+                raise MatchError(
+                    f"Don't know how to handle {mnemonic}")
+
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
         TRACE_MATCH(f"handle_operand {type(operand)}")
@@ -832,35 +880,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 TRACE_MATCH(
                     f"Handling int const '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
                 )
-                instr = instructions[state.instr_idx]
-                if operand.value == 0:
-                    if instr.mnemonic == "cbnz":
-                        # Let caller handle that case
-                        return state
-                    if instr.mnemonic == "cbz":
-                        # Let caller handle that case
-                        return state
-                match instructions[state.instr_idx].mnemonic:
-                    case "subs":
-                        match_sub_instr(instructions[state.instr_idx],
-                                        state.target_reg, operand.value)
-                        return MatchState(state.instr_idx + 1,
-                                          state.target_reg)
-                    case "mov":
-                        match_instr_const_operand(instr, 1, operand.value)
-                        return MatchState(state.instr_idx + 1,
-                                          get_instr_reg_operand(instr, 0))
-                    case "asr":
-                        match_instr_const_operand(instr, 2, operand.value)
-                        return MatchState(state.instr_idx + 1,
-                                          get_instr_reg_operand(instr, 0))
-                    case "ands":
-                        match_instr_const_operand(instr, 2, operand.value)
-                        return MatchState(state.instr_idx + 1,
-                                          get_instr_reg_operand(instr, 0))
-                    case mnemonic:
-                        raise MatchError(
-                            f"Don't know how to handle {mnemonic}")
+                return handle_int_const(operand.value, state)
+            case SizeOf():
+                TRACE_MATCH(
+                    f"Handling sizeof({operand.argtype}) for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
+                )
+                val = get_sizeof(cu, operand.argtype)
+                if val == None:
+                    raise Exception(f"Can't find integer value for sizeof({operand.argtype})")
+                return handle_int_const(val, state)
+
             case BoolExpression():
                 return recurse(operand, state)
             case ArraySubscript():

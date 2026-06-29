@@ -98,6 +98,16 @@ int* simple_loop()
         return array;
 }
 
+typedef unsigned long u64;
+
+void test_against_sizeof()
+{
+	u64 x = 12;
+
+	if ( x > sizeof(u64))
+		return;
+}
+
 int main(int argc, char *argv[])
 {
         test_global_var();
@@ -130,6 +140,8 @@ int main(int argc, char *argv[])
         test_and_or_cond_2(1, 1, 0, 0);
 
         simple_loop();
+
+	test_against_sizeof();
 
         return 0;
 }
