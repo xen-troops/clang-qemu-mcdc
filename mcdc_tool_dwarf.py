@@ -14,9 +14,10 @@ from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoo
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, EnumConst
 import pickle
 import argparse
-from typing import Optional
+from typing import Optional, Unpack
 from pprint import pformat, pprint
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from copy import copy
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
 from mcdc_tool_s_loc import get_s_file_locations, SFileLoc, SFileLocMap
@@ -709,18 +710,26 @@ class TracePoint:
         return f"<TracePoint( 0x{self.addr:06x} : {self.bool_expr} (inverted: {self.inverted}) )>"
 
 
+@dataclass
 class MatchState:
+    instr_idx: int
+    target_reg: Optional[str] = None
+    partial: bool = False
 
-    def __init__(self,
-                 instr_idx: int,
-                 target_reg: str = None,
-                 partial: bool = False):
-        self.instr_idx = instr_idx
-        self.target_reg = target_reg
-        self.partial = partial
+    def derive(self, **kwargs: Unpack[MatchState]):
+        ret = copy(self)
+        for field in fields(self):
+            if field.name in kwargs:
+                ret.__dict__[field.name] = kwargs[field.name]
+                del kwargs[field.name]
 
-    def __repr__(self) -> str:
-        return f"<MatchState(at={self.instr_idx} partial={self.partial} target_reg={self.target_reg})>"
+        if kwargs:
+            raise Exception(f"Unknown values left in kwargs: {kwargs}")
+
+        return ret
+
+    def advance(self, cnt=1):
+        return self.derive(instr_idx=self.instr_idx + cnt)
 
 
 def reg_cmp(r1: str, r2: str):
@@ -840,7 +849,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     if instr.mnemonic == "ldr":
                         # Match ldr x8, [sp]
                         idx += 1
-                    return MatchState(idx + 1, "x0")
+                    return state.derive(instr_idx=idx + 1, target_reg="x0", partial=False)
             else:
                 raise MatchError("Can't find function call")
         raise NotImplementedError()
@@ -861,22 +870,21 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # Like <IntLiteral 8> * <IntLiteral 8> == <IntLiteral 64>
                 # match_sub_instr(instructions[state.instr_idx],
                 #                 state.target_reg, value)
-                return MatchState(state.instr_idx + 1,
-                                  state.target_reg)
+                return state.derive(instr_idx=state.instr_idx + 1, partial=False)
             case "mov":
                 # match_instr_const_operand(instr, 1, value)
-                return MatchState(state.instr_idx + 1,
-                                  get_instr_reg_operand(instr, 0))
+                return state.derive(instr_idx=state.instr_idx + 1,
+                                    target_reg=get_instr_reg_operand(instr, 0))
             case "asr":
                 # TODO: See above
                 # match_instr_const_operand(instr, 2, value)
-                return MatchState(state.instr_idx + 1,
-                                  get_instr_reg_operand(instr, 0))
+                return state.derive(instr_idx=state.instr_idx + 1,
+                                    target_reg=get_instr_reg_operand(instr, 0))
             case "ands":
                 # TODO: See above
                 # match_instr_const_operand(instr, 2, value)
-                return MatchState(state.instr_idx + 1,
-                                  get_instr_reg_operand(instr, 0))
+                return state.derive(instr_idx=state.instr_idx + 1,
+                                    target_reg=get_instr_reg_operand(instr, 0))
             case mnemonic:
                 raise MatchError(
                     f"Don't know how to handle {mnemonic}")
@@ -911,9 +919,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
                         TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
-                        return MatchState(
-                            state.instr_idx + 1,
-                            aarch64_reg_name(instr.operands[0].reg))
+                        return state.derive(instr_idx=state.instr_idx + 1,
+                                            target_reg=aarch64_reg_name(instr.operands[0].reg))
                     case "DW_OP_addrx" | "DW_OP_abs_addr":
                         if v.op_type == "DW_OP_addrx":
                             abs_addr = cu.dwarfinfo.get_addr(
@@ -931,20 +938,20 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                 instr = instructions[state.instr_idx + 1]
                                 if instr.mnemonic != "add":
                                     match_instr_read_mem_operand(instr, 1, reg, rem)
-                                    return MatchState(
-                                        state.instr_idx + 2,
-                                        aarch64_reg_name(instr.operands[0].reg))
+                                    return state.derive(instr_idx=state.instr_idx + 2,
+                                                        target_reg=aarch64_reg_name(
+                                                            instr.operands[0].reg))
                                 else:
                                     # Pointers...
                                     match_instr_const_operand(instr, 2, rem)
-                                    return MatchState(
-                                        state.instr_idx + 2,
-                                        aarch64_reg_name(instr.operands[0].reg))
+                                    return state.derive(instr_idx=state.instr_idx + 2,
+                                                        target_reg=aarch64_reg_name(
+                                                            instr.operands[0].reg))
 
                             case "adr":
                                 match_instr_const_operand(instr, 1, abs_addr)
                                 reg = get_instr_reg_operand(instr, 0)
-                                return MatchState(state.instr_idx + 1, reg)
+                                return state.derive(instr_idx=state.instr_idx + 1, target_reg=reg)
                             case mnemonic:
                                 raise MatchError(f"Don't know how to handle {mnemonic} (addrx)")
 
@@ -955,9 +962,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
                         TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
-                        return MatchState(
-                            state.instr_idx + 1,
-                            aarch64_reg_name(instr.operands[0].reg))
+                        return state.derive(instr_idx=state.instr_idx + 1,
+                                            target_reg=aarch64_reg_name(instr.operands[0].reg))
                     case _:
                         raise Exception(f"Unknown var op {v.op_type}")
             case IntLiteral():
@@ -987,18 +993,15 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return recurse(operand, state)
             case ArraySubscript():
                 new_state = handle_operand(operand.array, state)
-                return MatchState(new_state.instr_idx + 1,
-                                  new_state.target_reg, True)
+                return new_state.derive(instr_idx=new_state.instr_idx + 1, partial=True)
             case CCast():
                 new_state = handle_operand(operand.casted, state)
-                return MatchState(new_state.instr_idx + 1,
-                                  new_state.target_reg, False)
+                return new_state.derive(instr_idx=new_state.instr_idx + 1, partial=False)
             case MemberExpr():
                 # Just do the fuzzy matching and hope for best
                 state = handle_operand(operand.left, state)
                 TRACE_MATCH(f"   member_expr target reg = {state.target_reg}")
-                state.partial = True
-                return state
+                return state.derive(partial=True)
             case FCall():
                 return handle_fcall(operand, state)
             case NonBoolExpression():
@@ -1006,8 +1009,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     new_state = handle_operand(operand.operands[0], state)
                 else:
                     new_state = handle_operand(operand.operands[1], state)
-                return MatchState(new_state.instr_idx, new_state.target_reg,
-                                  True)
+                return new_state.derive(partial=True)
                 pass
             case _:
                 raise Exception(
@@ -1131,12 +1133,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # TBD: Match cset condition flags
                 instr = instructions[new_state.instr_idx]
                 ret.append(TracePoint(instr.address, False, e))
-                return MatchState(new_state.instr_idx + 1)
+                return state.advance()
             case _:
                 raise MatchError(
                     f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
                 )
-        return MatchState(new_state.instr_idx + 2)
+        return new_state.advance(2)
 
     @fuzzy_matcher
     def handle_implicit_cast_tail(e: BoolExpression,
@@ -1239,15 +1241,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                             TracePoint(instructions[idx].address, False, e))
                     case "cset":
                         # TBD: Match cset condition flags
-                        ret.append(
-                            TracePoint(instructions[idx].address, False, e))
-                        return MatchState(idx + 1)
+                        ret.append(TracePoint(instructions[idx].address, False, e))
+                        return new_state.derive(instr_idx=idx + 1)
                     case _:
                         raise MatchError(
                             f"Expected for conditional branch, found {instructions[idx].mnemonic}"
                         )
 
-                return MatchState(idx + 2)
+                return new_state.derive(instr_idx=idx + 2)
             case BoolExpression.OP_XOR:
                 # TODO: Special case: a == a
                 if isinstance(e.a, NonBoolVar) and isinstance(e.b, NonBoolVar) \
@@ -1255,12 +1256,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     TRACE_MATCH(f"Found case {e.a.name} == {e.b.name}")
                     instr = instructions[state.instr_idx]
                     if instr.mnemonic == "cbnz":
-                        ret.append(
-                            TracePoint(
-                                instructions[state.instr_idx].address,
-                                False, e))
-                        return MatchState(state.instr_idx, None, False)
-
+                        ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
+                        return state.derive(target_reg=None, partial=False)
 
                 op1_state = handle_operand(e.a, state)
                 op1_state = match_optional_bool_cast(op1_state)
@@ -1283,8 +1280,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     match_sub_instr_regs(instr, op1_state.target_reg,
                                          op2_state.target_reg)
 
-                new_state = MatchState(op2_state.instr_idx + 1,
-                                       get_instr_reg_operand(instr, 0))
+                new_state = op2_state.derive(instr_idx=op2_state.instr_idx + 1,
+                                             target_reg=get_instr_reg_operand(instr, 0))
                 inverted = False
                 idx = new_state.instr_idx
                 # Optional write to variable
@@ -1317,13 +1314,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                 True, e.b))
                         new_state.instr_idx += 2
                     elif instructions[new_state.instr_idx].mnemonic == "tbnz":
-                        match_branch_isntr(
-                            instructions[new_state.instr_idx + 1], "b")
-                        ret.append(
-                            TracePoint(
-                                instructions[new_state.instr_idx].address,
-                                False, e.b))
-                return MatchState(idx + 2)
+                        match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                        ret.append(TracePoint(instructions[new_state.instr_idx].address, False,
+                                              e.b))
+                return new_state.derive(instr_idx=idx + 2)
             case BoolExpression.OP_OR:
                 return handle_and_or(e, state)
             case BoolExpression.OP_AND:
