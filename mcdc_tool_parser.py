@@ -56,6 +56,31 @@ def filter_const_expr(expressions: list[SAST]):
     return filter_and_report(lambda x: not x.is_const(), expressions,
                              "because they were const expressions")
 
+def insane_filter(expressions: list[SAST]):
+    def typecheck_predicate(expr: BoolExpression) -> bool:
+        if expr.op != BoolExpression.OP_EQ:
+            return True
+        if not isinstance(expr.a, NonBoolExpression) or not isinstance(expr.b, NonBoolExpression):
+            return True
+        if expr.a.opcode != "&" or expr.b.opcode != "&":
+            return False
+        a = expr.a.operands[0]
+        b = expr.b.operands[0]
+        if not isinstance(a, NonBoolVar) or not isinstance(b, NonBoolVar):
+            return True
+        if a.name != "_x" or b.name != "_y":
+            return True
+        return False
+    def flowcontrol_predicate(expr: SAST) -> bool:
+        if isinstance(expr, FlowControlStructure):
+            return False
+        if expr.children:
+            return all(flowcontrol_predicate(ch) for ch in expr.children)
+        return True
+
+    expressions = filter_and_report(typecheck_predicate, expressions, " - parts of min()/max() typechek")
+    expressions = filter_and_report(flowcontrol_predicate, expressions, " - has flowcontrol inside")
+    return expressions
 
 def get_bool_expr_list(
         compile_commands: str
@@ -122,11 +147,11 @@ def main():
     expressions = filter_const_expr(expressions)
     expressions = filter_same_expr(expressions)
     expressions = filter_by_source(expressions)
+    expressions = insane_filter(expressions)
 
     print(f"Saving {len(expressions)} expressions")
     for expr in expressions:
         expr.update_location_range()
-        print(f"{expr} at {expr.loc_range}")
 
     with open(args.output_pickle, "wb") as f:
         pickle.dump(expressions, f)
