@@ -241,6 +241,7 @@ def deep_dive(ast: ASTEntry) -> list[SAST]:
             "ImplicitCastExpr",
             "CompoundAssignOperator",
             "BinaryOperator",
+            "UnaryOperator",
             "ParenExpr",
             "ForStmt",
             "WhileStmt",
