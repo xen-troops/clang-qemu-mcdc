@@ -509,6 +509,10 @@ def get_variable_in_func(func_die: DIE,
     if "DW_AT_inline" in func_die.attributes:
         return None
 
+    if  "DW_AT_ranges" in func_die.attributes:
+        # TODO
+        log.warning("Skipping DIE because it has non-contigous ranges")
+        return None
     low_pc = func_die.attributes["DW_AT_low_pc"].value
     high_pc = func_die.attributes["DW_AT_high_pc"].value
     if func_die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
@@ -536,7 +540,7 @@ def get_variable_in_func(func_die: DIE,
                     f"Dunno what to do with this var: {child}")
             parsed_loc = _get_variable_loc(child, addr)
             best_match = DWVariable(name, parsed_loc, frame_base)
-        if child.tag == "DW_TAG_inlined_subroutine":
+        if child.tag in("DW_TAG_inlined_subroutine", "DW_TAG_lexical_block"):
             ret = get_variable_in_func(child, addr, name, frame_base)
             if ret:
                 return ret
@@ -685,7 +689,7 @@ def match_sub_instr(instr: capstone.CsInsn, target_reg, const):
 
 
 def match_sub_instr_regs(instr: capstone.CsInsn, reg1, reg2):
-    if instr.mnemonic != "subs":
+    if instr.mnemonic not in ("subs", "adds"):
         raise MatchError(
             f"Expected opcode 'subs' found {instr.mnemonic} at {instr.address:x} (match_sub_instr_regs)"
         )
@@ -765,6 +769,19 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             state.target_reg = get_instr_reg_operand(instr, 0)
         return state
 
+    def match_optional_nop(state: MatchState) -> MatchState:
+        instr = instructions[state.instr_idx]
+        if instr.mnemonic == "nop":
+            state.instr_idx += 1
+        return state
+
+    def match_optional_zero_mov(state: MatchState) -> MatchState:
+        #TODO: check that it is mov reg, wzr
+        instr = instructions[state.instr_idx]
+        if instr.mnemonic == "mov":
+            state.instr_idx += 1
+        return state
+
     ret: list[TracePoint] = []
 
     def _handle_inlined_fcall(operand: SAST, state: MatchState):
@@ -819,6 +836,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 instr = instructions[idx]
                 if instr.mnemonic == "bl" and instr.operands[
                         0].value.imm == func_addr:
+                    instr = instructions[idx + 1]
+                    if instr.mnemonic == "ldr":
+                        # Match ldr x8, [sp]
+                        idx += 1
                     return MatchState(idx + 1, "x0")
             else:
                 raise MatchError("Can't find function call")
@@ -862,6 +883,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
+        state = match_optional_nop(state)
         TRACE_MATCH(f"handle_operand {type(operand)}")
         match operand:
             case BoolVar() | NonBoolVar():
@@ -974,12 +996,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case MemberExpr():
                 # Just do the fuzzy matching and hope for best
                 state = handle_operand(operand.left, state)
+                TRACE_MATCH(f"   member_expr target reg = {state.target_reg}")
                 state.partial = True
                 return state
             case FCall():
                 return handle_fcall(operand, state)
             case NonBoolExpression():
-                new_state = handle_operand(operand.operands[0], state)
+                if operand.opcode != "=":
+                    new_state = handle_operand(operand.operands[0], state)
+                else:
+                    new_state = handle_operand(operand.operands[1], state)
                 return MatchState(new_state.instr_idx, new_state.target_reg,
                                   True)
                 pass
@@ -1059,44 +1085,43 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         op_is_gt_ge = (e.op == BoolExpression.OP_GT
                        or e.op == BoolExpression.OP_GE)
 
-        if not isinstance(e.b, IntLiteral):
+        new_state = match_optional_store(new_state)
+        new_state = match_optional_zero_mov(new_state)
+        if instructions[new_state.instr_idx].mnemonic == "subs":
             # We need subs op if it is not handled by IntLiteral() handler
             match_sub_instr_regs(instructions[new_state.instr_idx],
                                  op1_state.target_reg, op2_state.target_reg)
             new_state.instr_idx += 1
+        if instructions[new_state.instr_idx].mnemonic == "str":
+            # Sometimes compiler mixes comparison ops and load/stores, like this:
+            # a000035dd1c:   b9403fe9        ldr     w9, [sp, #60]
+            # a000035dd20:   b9403bea        ldr     w10, [sp, #56]
+            # a000035dd24:   2a1f03e8        mov     w8, wzr
+            # a000035dd28:   6b0a0129        subs    w9, w9, w10
+            # a000035dd2c:   b90017e8        str     w8, [sp, #20]
+            # a000035dd30:   54000122        b.cs    a000035dd54  // b.hs, b.nlast
+            new_state.instr_idx += 1
 
         match instructions[new_state.instr_idx].mnemonic:
-            case "b.lt":
+            case "b.lt" | "b.le" | "b.ls" | "b.lo":
                 inverted = op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
                                inverted, e))
-            case "b.le":
-                inverted = op_is_gt_ge
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(
-                    TracePoint(instructions[new_state.instr_idx].address,
-                               inverted, e))
-            case "b.gt":
+            case "b.gt" | "b.ge" | "b.hs" | "b.hi":
                 inverted = not op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
                                inverted, e))
-            case "b.ge":
-                inverted = not op_is_gt_ge
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(
-                    TracePoint(instructions[new_state.instr_idx].address,
-                               inverted, e))
-            case "tbnz":
+            case "tbnz" | "cbnz":
                 inverted = op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
                     TracePoint(instructions[new_state.instr_idx].address,
                                inverted, e))
-            case "tbz":
+            case "tbz" | "cbz":
                 inverted = not op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(
@@ -1117,12 +1142,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def handle_implicit_cast_tail(e: BoolExpression,
                                   state: MatchState) -> MatchState:
         match instructions[state.instr_idx].mnemonic:
-            case "tbz" | "cbz" | "cbnz" | "tbnz":
+            case "tbz" | "cbz" | "cbnz" | "tbnz" | "b.eq":
                 ret.append(
                     TracePoint(instructions[state.instr_idx].address, False,
                                e))
                 return MatchState(state.instr_idx + 1)
-            case "csel" | "csinc":
+            case "csel" | "csinc" | "cset":
                 ret.append(
                     TracePoint(instructions[state.instr_idx].address, False,
                                e))
@@ -1140,6 +1165,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
         match instructions[state.instr_idx].mnemonic:
             case "cbnz" | "cset":
+                #TODO: Inverse for cbnz?
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e.a))
+            case "tbz":
+                ret.append(
+                    TracePoint(instructions[state.instr_idx].address, False,
+                               e.a))
+            case "tbnz":
+                #TODO: Inverse?
                 ret.append(
                     TracePoint(instructions[state.instr_idx].address, False,
                                e.a))
@@ -1148,6 +1183,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 ret.append(
                     TracePoint(instructions[state.instr_idx].address, False,
                                e.a))
+            case "b":
+                if instructions[state.instr_idx - 1].mnemonic in ("cbnz"):
+                    # TODO: Inverse?
+                    ret.append(
+                        TracePoint(instructions[state.instr_idx - 1].address, False,
+                                   e.a))
             case mnemonic:
                 raise MatchError(
                     f"Don't know how to handle {mnemonic} (OP_NOT)")
@@ -1166,7 +1207,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = match_optional_bool_cast(new_state)
                 idx = new_state.instr_idx
                 # Optional subs:
-                if instructions[idx].mnemonic == "subs":
+                if instructions[idx].mnemonic in ("subs", "adds"):
                     idx += 1
                 # Optional write to variable
                 if instructions[idx].mnemonic in ("str", "stur"):
@@ -1208,21 +1249,37 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
                 return MatchState(idx + 2)
             case BoolExpression.OP_XOR:
+                # TODO: Special case: a == a
+                if isinstance(e.a, NonBoolVar) and isinstance(e.b, NonBoolVar) \
+                   and e.a.name == e.b.name:
+                    TRACE_MATCH(f"Found case {e.a.name} == {e.b.name}")
+                    instr = instructions[state.instr_idx]
+                    if instr.mnemonic == "cbnz":
+                        ret.append(
+                            TracePoint(
+                                instructions[state.instr_idx].address,
+                                False, e))
+                        return MatchState(state.instr_idx, None, False)
+
+
                 op1_state = handle_operand(e.a, state)
                 op1_state = match_optional_bool_cast(op1_state)
                 op2_state = handle_operand(e.b, op1_state)
                 op2_state = match_optional_bool_cast(op2_state)
-
+                # TODO: Fix this insanity
+                instr = instructions[op2_state.instr_idx]
                 if isinstance(
                         e.b,
                         IntLiteral) and instructions[op2_state.instr_idx -
-                                                     1].mnemonic == "subs":
+                                                     1].mnemonic in ("subs", "adds"):
                     TRACE_MATCH("Fixing up return from IntLiteral handler")
                     op2_state.instr_idx -= 1
                     instr = instructions[op2_state.instr_idx]
                     match_sub_instr(instr, op1_state.target_reg, e.b.value)
+                elif isinstance(e.b, IntLiteral) and e.b.value == 0 and instructions[op2_state.instr_idx].mnemonic in ("cbz", "cbnz"):
+                    TRACE_MATCH("Fixing up return from IntLiteral=0 handler ")
+                    op2_state.instr_idx -= 1
                 else:
-                    instr = instructions[op2_state.instr_idx]
                     match_sub_instr_regs(instr, op1_state.target_reg,
                                          op2_state.target_reg)
 
@@ -1274,9 +1331,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case BoolExpression.OP_NOT:
                 new_state = handle_operand(e.a, state)
                 return handle_op_not_tail(e, new_state)
-            case BoolExpression.OP_LT:
-                return handle_lt_gt_op(e, state)
-            case BoolExpression.OP_GT:
+            case BoolExpression.OP_LT | BoolExpression.OP_GT | BoolExpression.OP_GE | BoolExpression.OP_LE :
                 return handle_lt_gt_op(e, state)
             case BoolExpression.OP_IMPLICIT_CAST:
                 new_state = handle_operand(e.a, state)
