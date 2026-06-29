@@ -11,7 +11,7 @@ from elftools.dwarf.die import DIE
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, EnumConst
 import pickle
 import argparse
 from typing import Optional
@@ -493,6 +493,13 @@ def is_inlined_function(cu: CompileUnit, name: str) -> bool:
                 return True
     return False
 
+def get_enum_value(cu: CompileUnit, name: str) -> Optional[int]:
+    for child in cu.iter_DIEs():
+        if child.tag == "DW_TAG_enumeration_type":
+            for val in child.iter_children():
+                if val.tag == "DW_TAG_enumerator" and val.attributes["DW_AT_name"].value.decode() == name:
+                    return val.attributes["DW_AT_const_value"].value
+    return None
 
 def get_variable_in_func(func_die: DIE,
                          addr: int,
@@ -936,6 +943,15 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     f"Handling int const '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
                 )
                 return handle_int_const(operand.value, state)
+            case EnumConst():
+                TRACE_MATCH(
+                    f"Handling enum constant '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
+                )
+                val = get_enum_value(cu, operand.value)
+                TRACE_MATCH(f"   enum value is {val}")
+                if val == None:
+                    raise Exception(f"Can't find integer value for enum {operand.value}")
+                return handle_int_const(val, state)
             case SizeOf():
                 TRACE_MATCH(
                     f"Handling sizeof({operand.argtype}) for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"

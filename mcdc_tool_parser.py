@@ -8,7 +8,7 @@ import subprocess
 import pickle
 
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr
+    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr, EnumConst
 from mcdc_tool_s_loc import SFileLocMap, get_s_file_locations
 
 
@@ -256,6 +256,10 @@ def handle_expression(ast: ASTEntry) -> SAST:
         ref = ast.data["referencedDecl"]
         var_name = ref.data["name"]
         qual_type = ref.data["type"]["qualType"]
+        kind = ref.data["kind"]
+
+        if kind == "EnumConstantDecl":
+            return EnumConst(ast.get_loc(), var_name, ast)
         # if var_name == "ENUM_VAL_2":
         #     print(ast.data)
         #     print(ref.data)

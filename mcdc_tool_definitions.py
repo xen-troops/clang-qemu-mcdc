@@ -339,6 +339,16 @@ class IntLiteral(SAST):
     def __repr__(self) -> str:
         return f"<IntLiteral {self.value}>"
 
+class EnumConst(SAST):
+
+    def __init__(self, loc: CodeLoc, value: str, ast: ASTEntry):
+        self._derived_init_(loc, ast, [])
+        self.value = value
+        self._is_const = True
+
+    def __repr__(self) -> str:
+        return f"<EnumConst {self.value}>"
+
 
 class MemberExpr(SAST):
 
