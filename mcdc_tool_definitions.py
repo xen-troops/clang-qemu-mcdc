@@ -597,9 +597,9 @@ class NonBoolExpression(SAST):
     def __repr__(self) -> str:
         match len(self.operands):
             case 1:
-                return f"({self.opcode} {self.operands[0]})"
+                return f"(<NonBoolExpr> {self.opcode} {self.operands[0]})"
             case 2:
-                return f"({self.operands[0]} {self.opcode} {self.operands[1]})"
+                return f"(<NonBoolExpr> {self.operands[0]} {self.opcode} {self.operands[1]})"
             case _:
                 raise Exception(f"Too many operands: {len(self.operands)}")
 
