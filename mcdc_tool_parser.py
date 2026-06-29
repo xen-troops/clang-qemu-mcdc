@@ -414,11 +414,11 @@ def handle_expression(ast: ASTEntry) -> SAST:
             case "StmtExpr":
                 if len(ast.inner) != 1:
                     raise Exception(f"Unexpected amount of inner entries: {len(ast.inner)}")
-                return StatementExpression(ast.loc, recurse(ast.inner[0]), ast)
+                return StatementExpression(ast.get_loc(), recurse(ast.inner[0]), ast)
             case "CompoundStmt":
-                return CompoundStmt(ast.loc, [recurse(inner) for inner in ast.inner], ast)
+                return CompoundStmt(ast.get_loc(), [recurse(inner) for inner in ast.inner], ast)
             case "ReturnStmt":
-                return MiscExpr(ast.loc, ast, [recurse(inner) for inner in ast.inner])
+                return MiscExpr(ast.get_loc(), ast, [recurse(inner) for inner in ast.inner])
 
             case  "VarDecl"  | "DeclStmt" | \
                 "SwitchStmt" | "CaseStmt" | "DefaultStmt" | \
@@ -426,18 +426,18 @@ def handle_expression(ast: ASTEntry) -> SAST:
                 "CompoundLiteralExpr" | "VAArgExpr" :
 
                 children = [recurse(inner) for inner in ast.inner if inner]
-                return MiscExpr(ast.loc, ast, children)
+                return MiscExpr(ast.get_loc(), ast, children)
 
             case "NULL" | "GCCAsmStmt" | "NullStmt"  | "ContinueStmt" | \
                 "BreakStmt" | "TypeOfExprType" | "GotoStmt" | "BuiltinType" | \
                 "StaticAssertDecl" | "OffsetOfExpr" | "TypeTraitExpr" | \
                 "ConstantExpr" | "IncompleteArrayType" | "ConstantArrayType" | \
                 "RecordDecl" | "PredefinedExpr" | "ImplicitValueInitExpr" :
-                return NullOp(ast.loc, ast)
+                return NullOp(ast.get_loc(), ast)
 
             case kind if kind.endswith("Attr") :
                 # UnusedAttr, AsmLabelAttr, etc
-                return NullOp(ast.loc, ast)
+                return NullOp(ast.get_loc(), ast)
 
             case _:
                 pprint(ast)
