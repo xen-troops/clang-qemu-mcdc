@@ -465,22 +465,27 @@ class BoolExpression(SAST):
         leafs_b = []
         b_present = self.op not in (BoolExpression.OP_NOT,
                                     BoolExpression.OP_IMPLICIT_CAST)
+        a_is_const = self.a.is_const()
+        b_is_const = self.b.is_const() if b_present else True
+
         if b_present:
             leafs_b = self.b.get_leafs()
 
-        if not leafs_a and not leafs_b:
+        if (not leafs_a and not leafs_b) or (a_is_const and b_is_const):
             # We are the leaf
             return [self]
         else:
             if leafs_a:
                 ret.extend(leafs_a)
             else:
-                ret.append(self.a)
+                if not a_is_const:
+                    ret.append(self.a)
             if b_present:
                 if leafs_b:
                     ret.extend(leafs_b)
                 else:
-                    ret.append(self.b)
+                    if not b_is_const:
+                        ret.append(self.b)
         return ret
 
     def get_decisions(self) -> list[BoolExpression]:
