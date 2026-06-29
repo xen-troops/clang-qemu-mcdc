@@ -16,6 +16,7 @@ import pickle
 import argparse
 from typing import Optional
 from pprint import pformat, pprint
+from dataclasses import dataclass
 import capstone
 from mcdc_tool_capstone_helper import aarch64_reg_name
 from mcdc_tool_s_loc import get_s_file_locations, SFileLoc, SFileLocMap
@@ -426,7 +427,14 @@ def _parse_frame_base(attr, func_die: DIE) -> str:
     return expr_parser.parse_expr(loc_expr)[0]
 
 
-def get_variable_at_loc(cu: CompileUnit, addr: int, name: str):
+@dataclass
+class VariableInfo:
+    name: str
+    op_type: str
+    arg: int
+    frame_base: str
+
+def get_variable_at_loc(cu: CompileUnit, addr: int, name: str) -> VariableInfo:
     best_match = None
     for die in cu.get_top_DIE().iter_children():
         # At top level we can have two cases
@@ -441,10 +449,18 @@ def get_variable_at_loc(cu: CompileUnit, addr: int, name: str):
         if die.tag == "DW_TAG_subprogram":
             loc = get_variable_in_func(die, addr, name)
             if loc:
-                return loc
+                return VariableInfo(name, loc.loc_expr.op_name, loc.loc_expr.args[0], loc.frame_base)
             continue
 
-    return best_match
+    if best_match:
+        return VariableInfo(name, best_match.loc_expr.op_name, best_match.loc_expr.args[0], best_match.frame_base)
+    return None
+
+def get_global_variable(elf: ELFFile, name: str) -> VariableInfo:
+    sym = find_symbol(elf, name)
+    if not sym:
+        return None
+    return VariableInfo(name, "DW_OP_abs_addr", sym, None)
 
 
 # TODO: Add some caching?
@@ -829,10 +845,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                         instructions[state.instr_idx].address,
                                         operand.name)
                 if not v:
-                    raise Exception(
-                        f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
-                    )
-                match v.loc_expr.op_name:
+                    v = get_global_variable(elf, operand.name)
+                    if not v:
+                        raise MatchError(
+                            f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
+                        )
+                match v.op_type:
                     case "DW_OP_fbreg":
                         match v.frame_base:
                             case "DW_OP_reg31":
@@ -842,7 +860,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                             case _:
                                 raise Exception(
                                     f"TODO: Match reg {v.frame_base}")
-                        offset = v.loc_expr.args[0]
+                        offset = v.arg
                         instr = instructions[state.instr_idx]
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
@@ -850,23 +868,43 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         return MatchState(
                             state.instr_idx + 1,
                             aarch64_reg_name(instr.operands[0].reg))
-                    case "DW_OP_addrx":
-                        abs_addr = cu.dwarfinfo.get_addr(
-                            cu, v.loc_expr.args[0])
+                    case "DW_OP_addrx" | "DW_OP_abs_addr":
+                        if v.op_type == "DW_OP_addrx":
+                            abs_addr = cu.dwarfinfo.get_addr(
+                                cu, v.arg)
+                        else:
+                            abs_addr = v.arg
                         TRACE_MATCH(f"Global variable offset is {abs_addr:x}")
                         instr = instructions[state.instr_idx]
-                        offset = get_adrp_addr(instr)
-                        reg = get_instr_reg_operand(instr, 0)
-                        rem = abs_addr - offset
-                        TRACE_MATCH(f"remainder is {rem} in {reg}")
-                        instr = instructions[state.instr_idx + 1]
-                        match_instr_read_mem_operand(instr, 1, reg, rem)
-                        return MatchState(
-                            state.instr_idx + 2,
-                            aarch64_reg_name(instr.operands[0].reg))
+                        match instr.mnemonic:
+                            case "adrp":
+                                offset = get_adrp_addr(instr)
+                                reg = get_instr_reg_operand(instr, 0)
+                                rem = abs_addr - offset
+                                TRACE_MATCH(f"remainder is {rem} in {reg}")
+                                instr = instructions[state.instr_idx + 1]
+                                if instr.mnemonic != "add":
+                                    match_instr_read_mem_operand(instr, 1, reg, rem)
+                                    return MatchState(
+                                        state.instr_idx + 2,
+                                        aarch64_reg_name(instr.operands[0].reg))
+                                else:
+                                    # Pointers...
+                                    match_instr_const_operand(instr, 2, rem)
+                                    return MatchState(
+                                        state.instr_idx + 2,
+                                        aarch64_reg_name(instr.operands[0].reg))
+
+                            case "adr":
+                                match_instr_const_operand(instr, 1, abs_addr)
+                                reg = get_instr_reg_operand(instr, 0)
+                                return MatchState(state.instr_idx + 1, reg)
+                            case mnemonic:
+                                raise MatchError(f"Don't know how to handle {mnemonic} (addrx)")
+
                     case "DW_OP_breg31":
                         target_reg = "sp"
-                        offset = v.loc_expr.args[0]
+                        offset = v.arg
                         instr = instructions[state.instr_idx]
                         match_instr_read_mem_operand(instr, 1, target_reg,
                                                      offset)
@@ -875,7 +913,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                             state.instr_idx + 1,
                             aarch64_reg_name(instr.operands[0].reg))
                     case _:
-                        raise Exception(f"Unknown var op {v.loc_expr.op_name}")
+                        raise Exception(f"Unknown var op {v.op_type}")
             case IntLiteral():
                 TRACE_MATCH(
                     f"Handling int const '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
