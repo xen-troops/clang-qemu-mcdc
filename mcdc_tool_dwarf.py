@@ -474,7 +474,15 @@ def find_symbol(elf: ELFFile, name: str) -> Optional[int]:
         return None
     if len(syms) > 1:
         raise Exception(f"Found more that one symtab entry for {name}")
-    return syms[0]
+    return syms[0]["st_value"]
+
+def find_function(cu: CompileUnit, name: str) -> Optional[int]:
+    for child in cu.iter_DIEs():
+        if child.tag == "DW_TAG_subprogram":
+            if child.attributes["DW_AT_name"].value.decode(
+            ) == name:
+                return child.attributes["DW_AT_low_pc"].value
+    return None
 
 
 def is_inlined_function(cu: CompileUnit, name: str) -> bool:
@@ -788,9 +796,18 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         if isinstance(operand.fname, NonBoolVar):
             if is_inlined_function(cu, operand.fname.name):
                 return _handle_inlined_fcall(operand, state)
-            # Try looking in in global symbol table
-            sym = find_symbol(elf, operand.fname.name)
-            func_addr = sym["st_value"]
+
+            func_name: str = operand.fname.name
+            if func_name.startswith("__builtin_"):
+                TRACE_MATCH(f"Removing builtin prefix for {func_name}")
+                func_name = func_name.removeprefix("__builtin_")
+            # Try looking in the current CU, in case this is a static function
+            func_addr = find_function(cu, func_name)
+            if not func_addr:
+                # Try looking in in global symbol table
+                func_addr = find_symbol(elf, func_name)
+                if not func_addr:
+                    raise Exception(f"Can't find address for function {operand.fname.name}")
             for idx in range(state.instr_idx, len(instructions)):
                 instr = instructions[idx]
                 if instr.mnemonic == "bl" and instr.operands[
