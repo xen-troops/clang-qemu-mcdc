@@ -123,6 +123,12 @@ class ASTEntry:
             self.range.update(fname, line)
             fname = self.range.end.file
             line = self.range.begin.line
+
+            # For goto lables, childs begins after end of lable statement,
+            # except if it is on the same line
+            if self.kind == "LabelStmt":
+                line = self.range.end.line or self.range.begin.line
+
         for ch in self.inner:
             ch.update_locations(fname, line)
 
