@@ -541,6 +541,20 @@ class BoolExpression(SAST):
                 return child.get_undecided_child()
         return self
 
+    def promote_double_not(self) -> BoolExpression:
+        if self.op != self.OP_NOT:
+            return self
+        if not isinstance(self.a, BoolExpression):
+            return self
+        if self.a.op != self.OP_NOT:
+            return self
+
+        ret = self.a.a
+        if isinstance(ret, BoolExpression):
+            return ret
+        return BoolExpression(self.loc, None, ret, self.OP_IMPLICIT_CAST)
+
+
     __bin_op_mapping = {
         "||": OP_OR,
         "&&": OP_AND,

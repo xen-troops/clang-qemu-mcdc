@@ -397,8 +397,8 @@ def handle_expression(ast: ASTEntry) -> SAST:
         print(f"Got Nope exception for {ast.get_loc()}")
         return []
 
-    print(expr)
-    return expr.get_topmost_bool_expr()
+    print(expr, expr.loc)
+    return list(map(BoolExpression.promote_double_not, expr.get_topmost_bool_expr()))
 
 if __name__ == "__main__":
     main()
