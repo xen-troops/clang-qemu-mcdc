@@ -683,10 +683,9 @@ def match_branch_isntr(instr: capstone.CsInsn, mnemonic: str):
 
 
 def match_sub_instr(instr: capstone.CsInsn, target_reg, const):
-    if instr.mnemonic != "subs":
+    if instr.mnemonic not in ("subs", "adds"):
         raise MatchError(
-            f"Expected opcode 'subs' found {instr.mnemonic} at {instr.address:x} (match_sub_instr)"
-        )
+            f"Expected opcode 'subs'/'adds' found {instr.mnemonic} at {instr.address:x} (match_sub_instr)")
 
 
 #    match_instr_reg_operand(instr, 0, target_reg)
@@ -720,6 +719,8 @@ class MatchState:
     instr_idx: int
     target_reg: Optional[str] = None
     partial: bool = False
+    last_seen_var: Optional[str] = None
+    int_const: Optional[int] = None
 
     def derive(self, **kwargs: Unpack[MatchState]):
         ret = copy(self)
@@ -796,6 +797,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             state.instr_idx += 1
         return state
 
+    def ff_to_instruction(state: MatchState, instr: list[str]) -> MatchState:
+        skip = state.instr_idx
+        while skip < len(instructions):
+            if instructions[skip].mnemonic in instr:
+                return state.derive(instr_idx=skip)
+            skip += 1
+        return state
+
     ret: list[TracePoint] = []
 
     def _handle_inlined_fcall(operand: SAST, state: MatchState):
@@ -868,31 +877,108 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             if instr.mnemonic in ("cbnz", "cbz", "tbz", "tbnz"):
                 TRACE_MATCH(f"  found {instr.mnemonic}, passing control to caller")
                 # Let caller handle that case
-                return state
+                return state.derive(int_const=value)
         match instructions[state.instr_idx].mnemonic:
             case "subs" | "adds":
                 # TODO: We need to simplify expressions first.
                 # Like <IntLiteral 8> * <IntLiteral 8> == <IntLiteral 64>
                 # match_sub_instr(instructions[state.instr_idx],
                 #                 state.target_reg, value)
-                return state.derive(instr_idx=state.instr_idx + 1, partial=False)
+                return state.derive(instr_idx=state.instr_idx + 1, partial=False, int_const=value)
             case "mov":
                 # match_instr_const_operand(instr, 1, value)
                 return state.derive(instr_idx=state.instr_idx + 1,
-                                    target_reg=get_instr_reg_operand(instr, 0))
+                                    target_reg=get_instr_reg_operand(instr, 0),
+                                    int_const=value)
             case "asr":
                 # TODO: See above
                 # match_instr_const_operand(instr, 2, value)
                 return state.derive(instr_idx=state.instr_idx + 1,
-                                    target_reg=get_instr_reg_operand(instr, 0))
+                                    target_reg=get_instr_reg_operand(instr, 0),
+                                    int_const=value)
             case "ands":
                 # TODO: See above
                 # match_instr_const_operand(instr, 2, value)
                 return state.derive(instr_idx=state.instr_idx + 1,
-                                    target_reg=get_instr_reg_operand(instr, 0))
+                                    target_reg=get_instr_reg_operand(instr, 0),
+                                    int_const=value)
             case mnemonic:
+                raise MatchError(f"Don't know how to handle {mnemonic}")
+
+    def handle_variable(operand: SAST, state: MatchState):
+        v = get_variable_at_loc(cu, instructions[state.instr_idx].address, operand.name)
+        if not v:
+            v = get_global_variable(elf, operand.name)
+            if not v:
                 raise MatchError(
-                    f"Don't know how to handle {mnemonic}")
+                    f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
+                )
+        match v.op_type:
+            case "DW_OP_fbreg":
+                match v.frame_base:
+                    case "DW_OP_reg31":
+                        target_reg = "sp"
+                    case "DW_OP_reg29":
+                        target_reg = "x29"
+                    case _:
+                        raise Exception(f"TODO: Match reg {v.frame_base}")
+                offset = v.arg
+                instr = instructions[state.instr_idx]
+                try:
+                    match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                except MatchError:
+                    if state.last_seen_var and state.last_seen_var == operand.name:
+                        # This handles clang optimisation of var->field1 == var->field2
+                        TRACE_MATCH(f"   last seen variable {state.last_seen_var} at {instructions[state.instr_idx].address:x}")
+                        return state
+                    raise
+                TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
+                return state.derive(instr_idx=state.instr_idx + 1,
+                                    target_reg=aarch64_reg_name(instr.operands[0].reg),
+                                    last_seen_var=operand.name)
+            case "DW_OP_addrx" | "DW_OP_abs_addr":
+                if v.op_type == "DW_OP_addrx":
+                    abs_addr = cu.dwarfinfo.get_addr(cu, v.arg)
+                else:
+                    abs_addr = v.arg
+                TRACE_MATCH(f"Global variable offset is {abs_addr:x}")
+                instr = instructions[state.instr_idx]
+                match instr.mnemonic:
+                    case "adrp":
+                        offset = get_adrp_addr(instr)
+                        reg = get_instr_reg_operand(instr, 0)
+                        rem = abs_addr - offset
+                        TRACE_MATCH(f"remainder is {rem} in {reg}")
+                        instr = instructions[state.instr_idx + 1]
+                        if instr.mnemonic != "add":
+                            match_instr_read_mem_operand(instr, 1, reg, rem)
+                            return state.derive(instr_idx=state.instr_idx + 2,
+                                                target_reg=aarch64_reg_name(
+                                                    instr.operands[0].reg))
+                        else:
+                            # Pointers...
+                            match_instr_const_operand(instr, 2, rem)
+                            return state.derive(instr_idx=state.instr_idx + 2,
+                                                target_reg=aarch64_reg_name(
+                                                    instr.operands[0].reg))
+
+                    case "adr":
+                        match_instr_const_operand(instr, 1, abs_addr)
+                        reg = get_instr_reg_operand(instr, 0)
+                        return state.derive(instr_idx=state.instr_idx + 1, target_reg=reg)
+                    case mnemonic:
+                        raise MatchError(f"Don't know how to handle {mnemonic} (addrx)")
+
+            case "DW_OP_breg31":
+                target_reg = "sp"
+                offset = v.arg
+                instr = instructions[state.instr_idx]
+                match_instr_read_mem_operand(instr, 1, target_reg, offset)
+                TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
+                return state.derive(instr_idx=state.instr_idx + 1,
+                                    target_reg=aarch64_reg_name(instr.operands[0].reg))
+            case _:
+                raise Exception(f"Unknown var op {v.op_type}")
 
     @fuzzy_matcher
     def handle_operand(operand: SAST, state: MatchState):
@@ -900,77 +986,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         TRACE_MATCH(f"handle_operand {type(operand)}")
         match operand:
             case BoolVar() | NonBoolVar():
-                v = get_variable_at_loc(cu,
-                                        instructions[state.instr_idx].address,
-                                        operand.name)
-                if not v:
-                    v = get_global_variable(elf, operand.name)
-                    if not v:
-                        raise MatchError(
-                            f"Can't find variable {operand.name} near address 0x{instructions[state.instr_idx].address:x}"
-                        )
-                match v.op_type:
-                    case "DW_OP_fbreg":
-                        match v.frame_base:
-                            case "DW_OP_reg31":
-                                target_reg = "sp"
-                            case "DW_OP_reg29":
-                                target_reg = "x29"
-                            case _:
-                                raise Exception(
-                                    f"TODO: Match reg {v.frame_base}")
-                        offset = v.arg
-                        instr = instructions[state.instr_idx]
-                        match_instr_read_mem_operand(instr, 1, target_reg,
-                                                     offset)
-                        TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
-                        return state.derive(instr_idx=state.instr_idx + 1,
-                                            target_reg=aarch64_reg_name(instr.operands[0].reg))
-                    case "DW_OP_addrx" | "DW_OP_abs_addr":
-                        if v.op_type == "DW_OP_addrx":
-                            abs_addr = cu.dwarfinfo.get_addr(
-                                cu, v.arg)
-                        else:
-                            abs_addr = v.arg
-                        TRACE_MATCH(f"Global variable offset is {abs_addr:x}")
-                        instr = instructions[state.instr_idx]
-                        match instr.mnemonic:
-                            case "adrp":
-                                offset = get_adrp_addr(instr)
-                                reg = get_instr_reg_operand(instr, 0)
-                                rem = abs_addr - offset
-                                TRACE_MATCH(f"remainder is {rem} in {reg}")
-                                instr = instructions[state.instr_idx + 1]
-                                if instr.mnemonic != "add":
-                                    match_instr_read_mem_operand(instr, 1, reg, rem)
-                                    return state.derive(instr_idx=state.instr_idx + 2,
-                                                        target_reg=aarch64_reg_name(
-                                                            instr.operands[0].reg))
-                                else:
-                                    # Pointers...
-                                    match_instr_const_operand(instr, 2, rem)
-                                    return state.derive(instr_idx=state.instr_idx + 2,
-                                                        target_reg=aarch64_reg_name(
-                                                            instr.operands[0].reg))
-
-                            case "adr":
-                                match_instr_const_operand(instr, 1, abs_addr)
-                                reg = get_instr_reg_operand(instr, 0)
-                                return state.derive(instr_idx=state.instr_idx + 1, target_reg=reg)
-                            case mnemonic:
-                                raise MatchError(f"Don't know how to handle {mnemonic} (addrx)")
-
-                    case "DW_OP_breg31":
-                        target_reg = "sp"
-                        offset = v.arg
-                        instr = instructions[state.instr_idx]
-                        match_instr_read_mem_operand(instr, 1, target_reg,
-                                                     offset)
-                        TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
-                        return state.derive(instr_idx=state.instr_idx + 1,
-                                            target_reg=aarch64_reg_name(instr.operands[0].reg))
-                    case _:
-                        raise Exception(f"Unknown var op {v.op_type}")
+                return handle_variable(operand, state)
             case IntLiteral():
                 TRACE_MATCH(
                     f"Handling int const '{operand.value}' for reg {state.target_reg} at {instructions[state.instr_idx].address:x}"
@@ -1010,10 +1026,13 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case FCall():
                 return handle_fcall(operand, state)
             case NonBoolExpression():
-                if operand.opcode != "=":
-                    new_state = handle_operand(operand.operands[0], state)
-                else:
-                    new_state = handle_operand(operand.operands[1], state)
+                match operand.opcode:
+                    case "=":
+                        new_state = handle_operand(operand.operands[1], state)
+                    case "-":
+                        new_state = handle_operand(operand.operands[0], state)
+                    case _:
+                        new_state = handle_operand(operand.operands[0], state)
                 return new_state.derive(partial=True)
                 pass
             case _:
@@ -1094,6 +1113,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
         new_state = match_optional_store(new_state)
         new_state = match_optional_zero_mov(new_state)
+
+        new_state = ff_to_instruction(new_state, [
+            "subs", "str", "b.lt", "b.le", "b.ls", "b.lo", "b.gt", "b.ge", "b.hs", "b.hi", "tbnz",
+            "cbnz", "tbz", "cbz", "cset"
+        ])
         if instructions[new_state.instr_idx].mnemonic == "subs":
             # We need subs op if it is not handled by IntLiteral() handler
             match_sub_instr_regs(instructions[new_state.instr_idx],
@@ -1270,15 +1294,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 op2_state = match_optional_bool_cast(op2_state)
                 # TODO: Fix this insanity
                 instr = instructions[op2_state.instr_idx]
-                if isinstance(
-                        e.b,
-                        IntLiteral) and instructions[op2_state.instr_idx -
-                                                     1].mnemonic in ("subs", "adds"):
-                    TRACE_MATCH("Fixing up return from IntLiteral handler")
+                if e.b.is_const() and instructions[op2_state.instr_idx -
+                                                   1].mnemonic in ("subs", "adds"):
+                    TRACE_MATCH("Fixing up return from const value handler")
                     op2_state.instr_idx -= 1
                     instr = instructions[op2_state.instr_idx]
-                    match_sub_instr(instr, op1_state.target_reg, e.b.value)
-                elif isinstance(e.b, IntLiteral) and e.b.value == 0 and instructions[op2_state.instr_idx].mnemonic in ("cbz", "cbnz"):
+                    match_sub_instr(instr, op1_state.target_reg, op2_state.int_const)
+                elif e.b.is_const() and op2_state.int_const == 0 and instructions[
+                        op2_state.instr_idx].mnemonic in ("cbz", "cbnz"):
                     TRACE_MATCH("Fixing up return from IntLiteral=0 handler ")
                     op2_state.instr_idx -= 1
                 else:
