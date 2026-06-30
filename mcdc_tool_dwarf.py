@@ -1174,15 +1174,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                                   state: MatchState) -> MatchState:
         match instructions[state.instr_idx].mnemonic:
             case "tbz" | "cbz" | "cbnz" | "tbnz" | "b.eq":
-                ret.append(
-                    TracePoint(instructions[state.instr_idx].address, False,
-                               e))
-                return MatchState(state.instr_idx + 1)
+                ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
+                return state.advance()
             case "csel" | "csinc" | "cset":
-                ret.append(
-                    TracePoint(instructions[state.instr_idx].address, False,
-                               e))
-                return MatchState(state.instr_idx + 1)
+                ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
+                return state.advance()
             case mnemonic:
                 raise MatchError(
                     f"Don't know how to handle implicit bool cast instruction {mnemonic}"
