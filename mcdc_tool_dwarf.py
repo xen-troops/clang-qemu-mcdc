@@ -582,6 +582,11 @@ def match_instr_reg_operand(instr: capstone.CsInsn, idx: int, reg: str):
         raise MatchError(
             f"{idx}'th register is not one that we expect: {aarch64_reg_name(instr.operands[idx].reg)} != {reg}"
         )
+    # TODO: Enable this back
+    # if not reg_cmp(aarch64_reg_name(instr.operands[idx].reg), reg):
+    #     raise MatchError(
+    #         f"{idx}'th register is not one that we expect: {aarch64_reg_name(instr.operands[idx].reg)} != {reg}"
+    #     )
 
 
 def get_instr_reg_operand(instr: capstone.CsInsn, idx: int) -> str:
