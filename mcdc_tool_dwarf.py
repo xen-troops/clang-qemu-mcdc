@@ -301,7 +301,10 @@ def _get_addr_ranges_for_expr(expr: SAST, locations: list[DwarfLoc],
         for idx, loc in enumerate(locations):
             if _loc_is_in_expr(expr, loc):
                 # Always update end_loc
-                end_loc = locations[idx + 1]
+                if idx + 1 < len(locations):
+                    end_loc = locations[idx + 1]
+                else:
+                    end_loc = locations[idx]
                 if not start_loc:
                     start_loc = loc
 
