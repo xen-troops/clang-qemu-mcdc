@@ -1313,7 +1313,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case BoolExpression.OP_LT | BoolExpression.OP_GT | BoolExpression.OP_GE | BoolExpression.OP_LE:
                 return handle_lt_gt_op(e, state)
             case BoolExpression.OP_IMPLICIT_CAST:
-                new_state = handle_operand(e.a, state)
+                new_state = handle_operand(e.a, state).derive(partial=True)
                 return handle_implicit_cast_tail(e, new_state)
             case _:
                 raise Exception(f"Don't know what to do with {e} ({e.op})")
