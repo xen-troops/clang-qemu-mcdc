@@ -53,6 +53,24 @@ void test_const_expressions(void)
 	function_that_accepts_bool (2 > 3);
 }
 
+void test_half_const_expressions(void)
+{
+	int x = 0;
+	int y = 5;
+
+	if (0 && y < x)
+		return;
+
+	if (false && y > x)
+		return;
+
+	if (1 || y < x)
+		return;
+
+	if (true || y < x)
+		return;
+}
+
 int main(int argc, char *argv[])
 {
 

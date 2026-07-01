@@ -165,6 +165,7 @@ class SAST:
         self.parent = parent
         self._is_const: Optional[bool] = None
         self._is_var: Optional[bool] = None
+        self._bool_const_val: Optional[bool] = None
         self.uuid = str(uuid.uuid4())
 
         for child in self.inner:
@@ -342,6 +343,9 @@ class StringLiteral(SAST):
         self._derived_init_(loc, ast, [])
         self.value = value
         self._is_const = True
+        # No one shall cast string liter to bool value,
+        # but just in case...
+        self._bool_const_val = True
 
     def __repr__(self) -> str:
         return f"<StringLiteral {self.value}>"
@@ -353,6 +357,7 @@ class IntLiteral(SAST):
         self._derived_init_(loc, ast, [])
         self.value = value
         self._is_const = True
+        self._bool_const_val = value != 0
 
     def __repr__(self) -> str:
         return f"<IntLiteral {self.value}>"
@@ -458,6 +463,25 @@ class BoolExpression(SAST):
 
     def has_bool_expr(self):
         return True
+
+    def is_const(self):
+        # First, run base logic
+        if super().is_const():
+            return True
+
+        # Then do short circuit for constants
+        match self.op:
+            case self.OP_AND:
+                if self.a.is_const() and self.a._bool_const_val == False:
+                    self._bool_const_val = False
+                    self._is_const = True
+                    return True
+            case self.OP_OR:
+                if self.a.is_const() and self.a._bool_const_val == True:
+                    self._bool_const_val = True
+                    self._is_const = True
+                    return True
+        return False
 
     def get_leafs(self) -> list[BoolExpression]:
         # Arithmetic comparisons are always leafs
@@ -725,6 +749,8 @@ class SizeOf(SAST):
         self._derived_init_(loc, ast, [])
         self.argtype = argtype
         self._is_const = True
+        # sizeof() is always greater than 0
+        self._bool_const_val = True
 
     def __repr__(self) -> str:
         return f"sizeof({self.argtype})"
