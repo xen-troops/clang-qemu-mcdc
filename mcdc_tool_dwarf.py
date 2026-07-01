@@ -179,6 +179,7 @@ def _addr_inside_inlines(inlines: list[DwarfInlinedFunc], addr: int) -> bool:
     return any((_addr_inside_inline(inline, addr) for inline in inlines))
 
 
+@functools.lru_cache
 def _file_line_col_in_expr(expr: SAST, fname: str, line: int, col: int) -> bool:
     if expr.loc.file != fname:
         return False
@@ -196,6 +197,7 @@ def _file_line_col_in_expr(expr: SAST, fname: str, line: int, col: int) -> bool:
     return True
 
 
+@functools.lru_cache
 def _loc_is_in_expr(expr: SAST, loc: DwarfLoc) -> bool:
     fname = loc.fname
     line = loc.lp_state.line
@@ -404,6 +406,7 @@ def process_elf(fname: str, expressions: list[SAST], inline_map: dict[str, list[
         pickle.dump(ret, fp)
 
 
+@functools.lru_cache
 def _get_variable_loc(die: DIE, addr: int):
     # TODO: Cache this, maybe?
     location_lists = die.dwarfinfo.location_lists()
@@ -475,7 +478,7 @@ def get_global_variable(elf: ELFFile, name: str) -> VariableInfo:
     return VariableInfo(name, "DW_OP_abs_addr", sym, None)
 
 
-# TODO: Add some caching?
+@functools.lru_cache
 def find_symbol(elf: ELFFile, name: str) -> Optional[int]:
     sym_table: SymbolTableSection = elf.get_section_by_name(".symtab")
     if not sym_table:
