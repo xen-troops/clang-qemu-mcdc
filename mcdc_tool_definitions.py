@@ -144,8 +144,7 @@ class SAST:
     """Simple AST. Base class for other AST objects. Provides basic interface"""
 
     def __init__(self):
-        raise NotImplementedError(
-            "This class should not be constucted directly")
+        raise NotImplementedError("This class should not be constucted directly")
         # Little help for typing hints
         self.inner: list[SAST] = []
         self.parent: Optional[SAST] = None
@@ -186,7 +185,6 @@ class SAST:
                 return curr.data["name"]
             curr = curr.parent
         return "(global scope)"
-
 
     @property
     def children(self) -> list[SAST]:
@@ -246,14 +244,11 @@ class SAST:
 
     def get_leafs(self) -> list[BoolExpression]:
         "Returns list of leaf boolean expressions or `conditions` in MC/DC lingo"
-        return list(
-            itertools.chain.from_iterable(ch.get_leafs() for ch in self.inner))
+        return list(itertools.chain.from_iterable(ch.get_leafs() for ch in self.inner))
 
     def get_decisions(self) -> list[BoolExpression]:
         "Returns list of top-most boolean expressions or `decisions` in MC/DC lingo"
-        return list(
-            itertools.chain.from_iterable(ch.get_decisions()
-                                          for ch in self.inner))
+        return list(itertools.chain.from_iterable(ch.get_decisions() for ch in self.inner))
 
     def lift_fcall_args(self) -> list[SAST]:
         """
@@ -262,9 +257,7 @@ class SAST:
 
         N.B. This will change structure of the inner tree
         """
-        return list(
-            itertools.chain.from_iterable(ch.lift_fcall_args()
-                                          for ch in self.inner))
+        return list(itertools.chain.from_iterable(ch.lift_fcall_args() for ch in self.inner))
 
     def is_const(self) -> bool:
         if self._is_const == None:
@@ -362,6 +355,7 @@ class IntLiteral(SAST):
     def __repr__(self) -> str:
         return f"<IntLiteral {self.value}>"
 
+
 class EnumConst(SAST):
 
     def __init__(self, loc: CodeLoc, value: str, ast: ASTEntry):
@@ -375,8 +369,7 @@ class EnumConst(SAST):
 
 class MemberExpr(SAST):
 
-    def __init__(self, loc: CodeLoc, left: SAST, right: str, arrow: bool,
-                 ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, left: SAST, right: str, arrow: bool, ast: ASTEntry):
         self._derived_init_(loc, ast, [left])
         self.right = right
         self.arrow = arrow
@@ -428,12 +421,7 @@ class BoolExpression(SAST):
         OP_IMPLICIT_CAST: "(bool)",
     }
 
-    def __init__(self,
-                 loc: CodeLoc,
-                 ast: ASTEntry,
-                 opr_a: SAST,
-                 op,
-                 opr_b: Optional[SAST] = None):
+    def __init__(self, loc: CodeLoc, ast: ASTEntry, opr_a: SAST, op, opr_b: Optional[SAST] = None):
         self._derived_init_(loc, ast, [opr_a, opr_b] if opr_b else [opr_a])
         self.op = op
         self.loc = loc
@@ -485,16 +473,14 @@ class BoolExpression(SAST):
 
     def get_leafs(self) -> list[BoolExpression]:
         # Arithmetic comparisons are always leafs
-        if self.op in (BoolExpression.OP_EQ, BoolExpression.OP_XOR,
-                       BoolExpression.OP_GE, BoolExpression.OP_GT,
-                       BoolExpression.OP_LE, BoolExpression.OP_LT):
+        if self.op in (BoolExpression.OP_EQ, BoolExpression.OP_XOR, BoolExpression.OP_GE,
+                       BoolExpression.OP_GT, BoolExpression.OP_LE, BoolExpression.OP_LT):
             return [self]
 
         ret: list[BoolExpression] = []
         leafs_a = self.a.get_leafs()
         leafs_b = []
-        b_present = self.op not in (BoolExpression.OP_NOT,
-                                    BoolExpression.OP_IMPLICIT_CAST)
+        b_present = self.op not in (BoolExpression.OP_NOT, BoolExpression.OP_IMPLICIT_CAST)
         a_is_const = self.a.is_const()
         b_is_const = self.b.is_const() if b_present else True
 
@@ -530,9 +516,7 @@ class BoolExpression(SAST):
                 if hasattr(child, 'reset_value'):
                     child.reset_value()
                 else:
-                    if type(child).__name__ not in [
-                            'IntLiteral', 'StringLiteral', 'SizeOf'
-                    ]:
+                    if type(child).__name__ not in ['IntLiteral', 'StringLiteral', 'SizeOf']:
                         child.value = None
 
     def set_value(self, value: bool) -> bool:
@@ -585,8 +569,7 @@ class BoolExpression(SAST):
         for child in self.children:
             ret.extend(child.get_all_descendants())
 
-        if self.children and self.op != BoolExpression.OP_NOT and len(
-                self.children) < 2:
+        if self.children and self.op != BoolExpression.OP_NOT and len(self.children) < 2:
             ret.append(self)
         return ret
 
@@ -611,7 +594,6 @@ class BoolExpression(SAST):
             return ret
         return BoolExpression(self.loc, None, ret, self.OP_IMPLICIT_CAST)
 
-
     __bin_op_mapping = {
         "||": OP_OR,
         "&&": OP_AND,
@@ -632,8 +614,7 @@ class BoolExpression(SAST):
 
 class NonBoolExpression(SAST):
 
-    def __init__(self, loc: CodeLoc, opcode: str, operands: list[SAST],
-                 ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, opcode: str, operands: list[SAST], ast: ASTEntry):
         self._derived_init_(loc, ast, operands)
         self.opcode = opcode
 
@@ -653,8 +634,7 @@ class NonBoolExpression(SAST):
 
 class FCall(SAST):
 
-    def __init__(self, loc: CodeLoc, fname: SAST, args: list[SAST],
-                 ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, fname: SAST, args: list[SAST], ast: ASTEntry):
         self._derived_init_(loc, ast, [fname] + args)
 
     @property
@@ -702,15 +682,13 @@ class FCallArg(SAST):
 class FlowControlStructure(SAST):
     """Control structure which has some sort of "check" which makes implicit bool cast """
 
-    def __init__(self, loc: CodeLoc, check: SAST, rest: list[SAST],
-                 ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, check: SAST, rest: list[SAST], ast: ASTEntry):
         # We don't know what it is, but we need to wrap this into
         # BoolExpression just in case
         if isinstance(check, BoolExpression):
             bool_check = check
         else:
-            bool_check = BoolExpression(check.loc, ast, check,
-                                        BoolExpression.OP_IMPLICIT_CAST)
+            bool_check = BoolExpression(check.loc, ast, check, BoolExpression.OP_IMPLICIT_CAST)
 
         self._derived_init_(loc, ast, [bool_check] + rest)
 
@@ -758,8 +736,7 @@ class SizeOf(SAST):
 
 class CCast(SAST):
 
-    def __init__(self, loc: CodeLoc, cast_type: str, inner: SAST,
-                 ast: ASTEntry):
+    def __init__(self, loc: CodeLoc, cast_type: str, inner: SAST, ast: ASTEntry):
         self._derived_init_(loc, ast, [inner])
         self.cast_type = cast_type
 
@@ -769,6 +746,7 @@ class CCast(SAST):
     @property
     def casted(self):
         return self.inner[0]
+
 
 class StatementExpression(SAST):
 
@@ -789,6 +767,7 @@ class StatementExpression(SAST):
             ch.simplify()
             assert isinstance(ch, CompoundStmt)
             self.inner[idx] = ch.ret_expr
+
 
 class CompoundStmt(SAST):
 
