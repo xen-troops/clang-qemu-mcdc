@@ -148,8 +148,7 @@ def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
         ret = []
         for child in die.iter_children():
             if child.tag == "DW_TAG_inlined_subroutine":
-                func_info = cu.dwarfinfo.get_DIE_from_refaddr(
-                    child.attributes["DW_AT_abstract_origin"].value)
+                func_info = child.get_DIE_from_attribute("DW_AT_abstract_origin")
                 low_pc = child.attributes["DW_AT_low_pc"].value
                 high_pc = child.attributes["DW_AT_high_pc"].value
                 if child.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
@@ -521,8 +520,7 @@ def get_variable_in_func(func_die: DIE, addr: int, name: str, frame_base: Option
                 if child.attributes["DW_AT_name"].value.decode() != name:
                     continue
             elif "DW_AT_abstract_origin" in child.attributes:
-                var_info = func_die.dwarfinfo.get_DIE_from_refaddr(
-                    child.attributes["DW_AT_abstract_origin"].value)
+                var_info = child.get_DIE_from_attribute("DW_AT_abstract_origin")
                 if var_info.attributes["DW_AT_name"].value.decode() != name:
                     continue
             else:
@@ -547,8 +545,7 @@ def get_sizeof(cu: CompileUnit, name: str) -> Optional[int]:
                 if child.attributes["DW_AT_name"].value.decode() == name:
                     die = child
                     while die.tag == "DW_TAG_typedef":
-                        die = cu.get_DIE_from_refaddr(die.attributes["DW_AT_type"].value +
-                                                      cu.cu_offset)
+                        die = die.get_DIE_from_attribute("DW_AT_type")
                     TRACE_MATCH(die)
                     return die.attributes["DW_AT_byte_size"].value
     return None
