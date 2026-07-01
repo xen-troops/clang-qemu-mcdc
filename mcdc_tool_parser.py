@@ -350,6 +350,12 @@ def handle_expression(ast: ASTEntry) -> SAST:
             if ast.inner:
                 assert len(ast.inner) == 1
                 arg = recurse(ast.inner[0])
+                if isinstance(arg, NonBoolVar):
+                    arg = arg.var_type
+                else:
+                    # TODO
+                    arg = None
+#                    raise Exception(f"Don't know how to calculate sizeof for {arg}")
             else:
                 arg = ast.data["argType"]["qualType"]
             return SizeOf(ast.get_loc(), arg, ast)

@@ -572,11 +572,18 @@ def get_sizeof(cu: CompileUnit, name: str) -> Optional[int]:
         global SIZEOF_NONE_CNT
         SIZEOF_NONE_CNT += 1
         raise Exception("Can't handle None in sizeof")
+    array_size = 1
+    if "[" in name:
+        if name[-1] != "]":
+            raise Exception(f"Strange array definition: {name}")
+        bracket_pos = name.index("[")
+        array_size = int(name[bracket_pos + 1:-1])
+        name = name[:bracket_pos]
     for child in cu.iter_DIEs():
         match child.tag:
             case "DW_TAG_base_type":
                 if child.attributes["DW_AT_name"].value.decode() == name:
-                    return child.attributes["DW_AT_byte_size"].value
+                    return child.attributes["DW_AT_byte_size"].value * array_size
             case "DW_TAG_typedef":
                 if child.attributes["DW_AT_name"].value.decode() == name:
                     die = child
