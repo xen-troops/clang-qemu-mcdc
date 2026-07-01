@@ -98,6 +98,9 @@ def parse_locs(cu, sfilelocs: list[SFileLocMap]) -> list[DwarfLoc]:
     return ret
 
 
+CODE_OUT_OF_SECTION = 0
+
+
 def get_code_for_range(elffile: ELFFile, start, end):
     for sect in elffile.iter_sections():
         if sect["sh_type"] != "SHT_PROGBITS":
@@ -111,6 +114,8 @@ def get_code_for_range(elffile: ELFFile, start, end):
             end -= 16
         if end > sect_start + sect_len:
             sect_name = elffile._get_section_name(sect.header)
+            global CODE_OUT_OF_SECTION
+            CODE_OUT_OF_SECTION += 1
             raise Exception(
                 f"Section {sect_name} holds beginning of range ({start:x}, {end:x})  but not end")
         return sect.data()[start - sect_start:end - sect_start + 4]
@@ -328,6 +333,10 @@ def _get_next_expr_for_processing(locs: list[DwarfLoc], expressions: list[SAST],
             yield ExprAddressData(expr, r[0], r[1] + 24)
 
 
+FAIL_COUNTER = 0
+ELF_RANGE_FAIL_CNT = 0
+
+
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
                s_file_locs: list[SFileLocMap]) -> list[TracePoint]:
     cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
@@ -342,14 +351,27 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
     TRACE_CU("Inlines:")
     TRACE_CU(pformat(inlines))
     for next_expr in _get_next_expr_for_processing(dwarf_locs, expressions, inlines):
-        data = get_code_for_range(elffile, next_expr.start_addr, next_expr.end_addr)
+        try:
+            data = get_code_for_range(elffile, next_expr.start_addr, next_expr.end_addr)
+        except Exception:
+            pass
         TRACE_CU(f"Found next expr: {next_expr}")
         if not data:
-            raise Exception(f"Can't get data for expr {next_expr}")
-        ret.append(
-            match_bool_expr(cu, elffile, next_expr.expr,
-                            list(dis.disasm(data, next_expr.start_addr)), inlines))
+            global ELF_RANGE_FAIL_CNT
+            ELF_RANGE_FAIL_CNT += 1
 
+
+#            raise Exception(f"Can't get data for expr {next_expr}")
+        try:
+            ret.append(
+                match_bool_expr(cu, elffile, next_expr.expr,
+                                list(dis.disasm(data, next_expr.start_addr)), inlines))
+        except TypeError:
+            raise
+        except Exception as e:
+            log.warning(f"Got exception {e}. Skipping that expr.")
+            global FAIL_COUNTER
+            FAIL_COUNTER += 1
     return ret
 
 
@@ -535,7 +557,15 @@ def get_variable_in_func(func_die: DIE, addr: int, name: str, frame_base: Option
     return best_match
 
 
+SIZEOF_NONE_CNT = 0
+
+
 def get_sizeof(cu: CompileUnit, name: str) -> Optional[int]:
+    # Just pray that we don't have multidimensional arrays here
+    if name == None:
+        global SIZEOF_NONE_CNT
+        SIZEOF_NONE_CNT += 1
+        raise Exception("Can't handle None in sizeof")
     for child in cu.iter_DIEs():
         match child.tag:
             case "DW_TAG_base_type":
@@ -718,6 +748,8 @@ def reg_cmp(r1: str, r2: str):
 def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     instructions: list[capstone.CsInsn], inlines: list[DwarfInlinedFunc]):
 
+    FUZZ_MATCHER_FAILURES = 0
+
     def fuzzy_matcher(func):
 
         def result(arg1, state: MatchState):
@@ -725,6 +757,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return func(arg1, state)
             offset = state.instr_idx
             while offset < min(offset + 10, len(instructions)):
+                nonlocal FUZZ_MATCHER_FAILURES
+                FUZZ_MATCHER_FAILURES += 1
+                if FUZZ_MATCHER_FAILURES >= 1000:
+                    raise Exception("Fuzzy matcher failed 1000 times. Bailing out")
                 try:
                     return func(arg1, state.derive(instr_idx=offset, target_reg=state.target_reg))
                 except MatchError as e:
@@ -1311,6 +1347,10 @@ def main():
 
     mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle, args.inline_pickle)
     process_elf(args.executable, mcdc_data, iniline_loc, args.output_pickle, args.out_plugin_conf)
+    log.info(f"FAIL_COUNTER = {FAIL_COUNTER}")
+    log.info(f"ELF_RANGE_FAIL_CNT = {ELF_RANGE_FAIL_CNT}")
+    log.info(f"SIZEOF_NONE_CNT (included in FAIL_COUNTER) = {SIZEOF_NONE_CNT}")
+    log.info(f"CODE_OUT_OF_SECTION = {CODE_OUT_OF_SECTION}")
 
 
 if __name__ == "__main__":
