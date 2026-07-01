@@ -35,7 +35,17 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 #define CSEL_OPCODE_MASK 0x7FE00000
 #define CSEL_OPCODE      0x1A800000
 
+#define STR_IMM_MASK 0x3FC00000
+#define STR_IMM_VAL  0x39000000 /* STR / STRB / STRH (unsigned offset) */
+
+#define STUR_MASK    0x3FE00000
+#define STUR_VAL     0x38000000 /* STUR / STURB / STURH (unscaled offset) */
+
+#define STR_REG_MASK 0x3FE00C00
+#define STR_REG_VAL  0x38200800 /* STR (register offset) */
+
 /* 5-bit register index from an AArch64 instruction */
+#define RT(insn) ((insn) & 0x1F)    /* Bits [4:0] - Transfer Reg (Load/Store) */
 #define RD(insn) ((insn) & 0x1F)            /* Bits [4:0]   */
 #define RN(insn) (((insn) >> 5) & 0x1F)     /* Bits [9:5]   */
 #define RM(insn) (((insn) >> 16) & 0x1F)    /* Bits [20:16] */
@@ -373,6 +383,17 @@ static void vcpu_tb_trans_cb(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             }
 
             data->target_addr = insn_vaddr + 4;
+        } else if ((opcode & STR_IMM_MASK) == STR_IMM_VAL ||
+                   (opcode & STUR_MASK) == STUR_VAL ||
+                   (opcode & STR_REG_MASK) == STR_REG_VAL) {
+
+            data->branch_type = BR_PSEUDO_REG_WATCH;
+            data->reg_idx = RT(opcode);
+
+            data->is_64bit = ((opcode >> 30) & 0x3) == 3;
+
+            data->target_addr = insn_vaddr + 4;
+
         } else if (data->reg_idx != NO_REG_WATCH) {
             data->branch_type = BR_PSEUDO_REG_WATCH;
             data->target_addr = insn_vaddr + 4;
