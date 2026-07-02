@@ -546,7 +546,7 @@ static void load_config_file(const char *filename)
         if (!space) {
             fprintf(stderr, "Failed to parse config file: %s\n", filename);
             fprintf(stderr, "Missing UUID space separator at : %s\n", line);
-            exit(EXIT_FAILURE);
+            continue;
         }
 
         *space = '\0';
