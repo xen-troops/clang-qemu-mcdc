@@ -1076,7 +1076,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state.instr_idx += 2
             case "cbz":
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.a))
+                ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.a))
                 new_state.instr_idx += 2
             case "cbnz":
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
@@ -1169,7 +1169,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     @fuzzy_matcher
     def handle_implicit_cast_tail(e: BoolExpression, state: MatchState) -> MatchState:
         match instructions[state.instr_idx].mnemonic:
-            case "tbz" | "cbz" | "cbnz" | "tbnz" | "b.eq":
+            case "tbz" | "cbz" | "b.eq":
+                ret.append(TracePoint(instructions[state.instr_idx].address, True, e))
+                return state.advance()
+            case "cbnz" | "tbnz" | "b.ne":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
                 return state.advance()
             case "csel" | "csinc" | "cset":
@@ -1186,21 +1189,18 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             return state
 
         match instructions[state.instr_idx].mnemonic:
-            case "cbnz" | "cset":
-                #TODO: Inverse for cbnz?
+            case "cbnz" | "tbnz" | "b.ne" | "cset":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
-            case "tbz":
-                ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
-            case "tbnz":
-                #TODO: Inverse?
-                ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
+            case "tbz" | "cbz" | "b.eq":
+                ret.append(TracePoint(instructions[state.instr_idx].address, True, e.a))
             case "eor":
-                # TODO: This is not a branch instruction, but this is best we can get
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
             case "b":
-                if instructions[state.instr_idx - 1].mnemonic in ("cbnz"):
-                    # TODO: Inverse?
+                prev_mnem = instructions[state.instr_idx - 1].mnemonic
+                if prev_mnem in ("cbnz", "tbnz", "b.ne"):
                     ret.append(TracePoint(instructions[state.instr_idx - 1].address, False, e.a))
+                elif prev_mnem in ("cbz", "tbz", "b.eq"):
+                    ret.append(TracePoint(instructions[state.instr_idx - 1].address, True, e.a))
             case mnemonic:
                 raise MatchError(f"Don't know how to handle {mnemonic} (OP_NOT)")
         return state
