@@ -1071,35 +1071,46 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def handle_and_or(e: BoolExpression, state: MatchState) -> MatchState:
         new_state = handle_operand(e.a, state)
         new_state = match_optional_store(new_state)
-        match instructions[new_state.instr_idx].mnemonic:
-            case "tbz":
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.a))
-                new_state.instr_idx += 2
-            case "tbnz":
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.a))
-                new_state.instr_idx += 2
-            case "cbz":
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.a))
-                new_state.instr_idx += 2
-            case "cbnz":
-                match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.a))
-                new_state.instr_idx += 2
-            case mnemonic:
-                TRACE_MATCH(f"Skipping {mnemonic} at {instructions[new_state.instr_idx].address:x}")
+
+        if not isinstance(e.a, BoolExpression):
+            match instructions[new_state.instr_idx].mnemonic:
+                case "tbz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.a))
+                    new_state.instr_idx += 2
+                case "tbnz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.a))
+                    new_state.instr_idx += 2
+                case "cbz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.a))
+                    new_state.instr_idx += 2
+                case "cbnz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.a))
+                    new_state.instr_idx += 2
+                case mnemonic:
+                    TRACE_MATCH(f"Skipping {mnemonic} at {instructions[new_state.instr_idx].address:x}")
 
         new_state = handle_operand(e.b, new_state)
         new_state = match_optional_store(new_state)
-        if isinstance(e.b, BoolVar):
+
+        if not isinstance(e.b, BoolExpression):
             match instructions[new_state.instr_idx].mnemonic:
                 case "tbz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                     ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.b))
                     new_state.instr_idx += 2
                 case "tbnz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.b))
+                    new_state.instr_idx += 2
+                case "cbz":
+                    match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
+                    ret.append(TracePoint(instructions[new_state.instr_idx].address, True, e.b))
+                    new_state.instr_idx += 2
+                case "cbnz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                     ret.append(TracePoint(instructions[new_state.instr_idx].address, False, e.b))
                     new_state.instr_idx += 2
