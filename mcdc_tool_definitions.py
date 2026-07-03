@@ -493,7 +493,7 @@ class BoolExpression(SAST):
         if b_present:
             leafs_b = self.b.get_leafs()
 
-        if (not leafs_a and not leafs_b) or (a_is_const and b_is_const):
+        if (a_is_const and b_is_const):
             # We are the leaf
             return [self]
         else:
