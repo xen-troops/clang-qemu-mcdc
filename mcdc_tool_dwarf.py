@@ -892,6 +892,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 TRACE_MATCH(f"  found {instr.mnemonic}, passing control to caller")
                 # Let caller handle that case
                 return state.derive(int_const=value)
+
+        # Try to feed forward (for simple cases at least)
+        if state.partial:
+            idx = state.instr_idx
+            while idx < len(instructions):
+                if instructions[idx].mnemonic in ("subs", "adds"):
+                    state = state.derive(instr_idx=idx)
+                    break
+                idx += 1
+
         match instructions[state.instr_idx].mnemonic:
             case "subs" | "adds":
                 # TODO: We need to simplify expressions first.
