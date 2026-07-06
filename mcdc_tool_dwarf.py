@@ -1165,7 +1165,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # TBD: Match cset condition flags
                 instr = instructions[new_state.instr_idx]
                 ret.append(TracePoint(instr.address, False, e))
-                return state.advance()
+                return new_state.advance()
             case _:
                 raise MatchError(
                     f"Expected b.lt or b.ge, but found {instructions[new_state.instr_idx].mnemonic}"
