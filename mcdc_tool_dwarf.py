@@ -811,7 +811,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def match_optional_zero_mov(state: MatchState) -> MatchState:
         #TODO: check that it is mov reg, wzr
         instr = instructions[state.instr_idx]
-        if instr.mnemonic == "mov":
+        if instr.mnemonic in ("mov", "movz"):
             state.instr_idx += 1
         return state
 
@@ -1222,6 +1222,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = match_optional_bool_cast(new_state)
                 new_state = handle_operand(e.b, new_state)
                 new_state = match_optional_bool_cast(new_state)
+
+                new_state = match_optional_zero_mov(new_state)
+
                 idx = new_state.instr_idx
                 # Optional subs:
                 if instructions[idx].mnemonic in ("subs", "adds"):
