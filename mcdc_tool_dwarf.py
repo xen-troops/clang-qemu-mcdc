@@ -880,10 +880,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     return state.derive(instr_idx=idx + 1, target_reg="x0", partial=False)
             else:
                 raise MatchError("Can't find function call")
-        raise NotImplementedError()
-        state = handle_operand(operand.fname, state)
-        state.partial = True
-        return state
+        else:
+            # Handle function pointer calls, e.g. MemberExpr like entry->matches()
+            for idx in range(state.instr_idx, len(instructions)):
+                instr = instructions[idx]
+                if instr.mnemonic in ("blr", "bl"):
+                    next_idx = idx + 1
+                    if next_idx < len(instructions) and instructions[next_idx].mnemonic == "ldr":
+                        next_idx += 1
+                    return state.derive(instr_idx=next_idx, target_reg="x0", partial=False)
+            raise MatchError(f"Can't find function pointer call instruction for {operand.fname}")
 
     def handle_int_const(value: int, state: MatchState):
         instr = instructions[state.instr_idx]
