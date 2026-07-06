@@ -471,6 +471,12 @@ class BoolExpression(SAST):
                     return True
         return False
 
+    def simplify(self):
+        super().simplify()
+        #  Convert "const == expr" to "expr == const"
+        if self.op == self.OP_EQ and self.a.is_const():
+            self.inner[0], self.inner[1] = self.inner[1], self.inner[0]
+
     def get_leafs(self) -> list[BoolExpression]:
         # Arithmetic comparisons are always leafs
         if self.op in (BoolExpression.OP_EQ, BoolExpression.OP_XOR, BoolExpression.OP_GE,
