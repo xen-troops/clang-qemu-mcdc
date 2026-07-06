@@ -1123,7 +1123,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             "cbnz", "tbz", "cbz", "cset"
         ])
 
-        if instructions[new_state.instr_idx].mnemonic == "subs":
+        while instructions[new_state.instr_idx].mnemonic == "subs":
             # We need subs op if it is not handled by IntLiteral() handler
             match_sub_instr_regs(instructions[new_state.instr_idx], op1_state.target_reg,
                                  op2_state.target_reg)
