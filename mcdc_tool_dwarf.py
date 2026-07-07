@@ -1215,14 +1215,6 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case "eor":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
                 return state.advance().derive(partial=True)
-            case "b":
-                prev_mnem = instructions[state.instr_idx - 1].mnemonic
-                if prev_mnem in ("cbnz", "tbnz", "b.ne"):
-                    ret.append(TracePoint(instructions[state.instr_idx - 1].address, False, e.a))
-                    return state.advance().derive(partial=True)
-                elif prev_mnem in ("cbz", "tbz", "b.eq"):
-                    ret.append(TracePoint(instructions[state.instr_idx - 1].address, True, e.a))
-                    return state.advance().derive(partial=True)
             case mnemonic:
                 raise MatchError(f"Don't know how to handle {mnemonic} (OP_NOT)")
         return state
