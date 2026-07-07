@@ -1044,7 +1044,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return recurse(operand, state)
             case ArraySubscript():
                 new_state = handle_operand(operand.array, state)
-                return new_state.derive(instr_idx=new_state.instr_idx + 1, partial=True)
+                return new_state.derive(partial=True)
             case CCast():
                 new_state = handle_operand(operand.casted, state)
                 return new_state.derive(instr_idx=new_state.instr_idx + 1, partial=False)
