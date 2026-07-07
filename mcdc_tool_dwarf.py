@@ -1202,22 +1202,27 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     @fuzzy_matcher
     def handle_op_not_tail(e: BoolExpression, state: MatchState) -> MatchState:
         # Return early if we are not trying to handle top-level NOT expression
-        if e != expr or expr.op != BoolExpression.OP_NOT:
-            return state
+        if isinstance(e.a, BoolExpression):
+             return state
 
         match instructions[state.instr_idx].mnemonic:
             case "cbnz" | "tbnz" | "b.ne" | "cset":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
+                return state.advance().derive(partial=True)
             case "tbz" | "cbz" | "b.eq":
                 ret.append(TracePoint(instructions[state.instr_idx].address, True, e.a))
+                return state.advance().derive(partial=True)
             case "eor":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
+                return state.advance().derive(partial=True)
             case "b":
                 prev_mnem = instructions[state.instr_idx - 1].mnemonic
                 if prev_mnem in ("cbnz", "tbnz", "b.ne"):
                     ret.append(TracePoint(instructions[state.instr_idx - 1].address, False, e.a))
+                    return state.advance().derive(partial=True)
                 elif prev_mnem in ("cbz", "tbz", "b.eq"):
                     ret.append(TracePoint(instructions[state.instr_idx - 1].address, True, e.a))
+                    return state.advance().derive(partial=True)
             case mnemonic:
                 raise MatchError(f"Don't know how to handle {mnemonic} (OP_NOT)")
         return state
