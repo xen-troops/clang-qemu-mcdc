@@ -1069,10 +1069,35 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 raise Exception(f"Don't know what to do with operand {operand}")
 
     def handle_and_or(e: BoolExpression, state: MatchState) -> MatchState:
+        def get_cond_instr(search_state: MatchState) -> MatchState:
+            branches = {"tbz", "tbnz", "cbz", "cbnz", "cset"}
+            fallbacks = {"str", "stur"}
+            fallback_idx = -1
+
+            for idx in range(search_state.instr_idx, len(instructions)):
+                mnem = instructions[idx].mnemonic
+
+                if mnem in branches:
+                    return search_state.derive(instr_idx=idx)
+
+                if mnem in fallbacks:
+                    fallback_idx = idx
+
+                # stop on exit of this block
+                if mnem in ("b", "ret"):
+                    break
+
+            if fallback_idx != -1:
+                return search_state.derive(instr_idx=fallback_idx)
+
+            return search_state
+
         new_state = handle_operand(e.a, state)
         new_state = match_optional_store(new_state)
 
         if not isinstance(e.a, BoolExpression):
+            new_state = get_cond_instr(new_state)
+
             match instructions[new_state.instr_idx].mnemonic:
                 case "tbz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
@@ -1097,6 +1122,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         new_state = match_optional_store(new_state)
 
         if not isinstance(e.b, BoolExpression):
+            new_state = get_cond_instr(new_state)
+
             match instructions[new_state.instr_idx].mnemonic:
                 case "tbz":
                     match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
