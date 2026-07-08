@@ -1255,7 +1255,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case "cbnz" | "tbnz" | "b.ne":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
                 return state.advance()
-            case "csel" | "csinc" | "cset":
+            case "csel" | "csinc" | "cset" | "cinc":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
                 return state.advance()
             case mnemonic:
