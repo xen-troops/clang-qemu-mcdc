@@ -1,0 +1,13 @@
+# Ignore generated files
+*.pickle
+*.o
+*.json
+*.conf
+*.s
+*.bc
+*.i
+*.ll
+
+# Rule for tests is somewhat harder
+tests/*
+!tests/*.c
