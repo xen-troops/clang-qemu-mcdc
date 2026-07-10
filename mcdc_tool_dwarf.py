@@ -1248,6 +1248,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 
     @fuzzy_matcher
     def handle_implicit_cast_tail(e: BoolExpression, state: MatchState) -> MatchState:
+        if isinstance(e.a, BoolExpression):
+            return state
+
         match instructions[state.instr_idx].mnemonic:
             case "tbz" | "cbz" | "b.eq":
                 ret.append(TracePoint(instructions[state.instr_idx].address, True, e))
