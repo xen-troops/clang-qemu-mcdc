@@ -196,14 +196,9 @@ class SAST:
         if not self.inner:
             self.loc_range = self._base_range
         else:
-            # TODO use max_loc and min_loc values instead
-            min_line = sys.maxsize
-            min_col = sys.maxsize
-            max_col = 0
-            max_line = 0
             fname = self.loc.file
-            max_loc: CodeLoc = None
-            min_loc: CodeLoc = None
+            min_loc: CodeLoc = self._base_range.begin
+            max_loc: CodeLoc = self._base_range.end
             for ch in self.inner:
                 if not ch.loc:
                     continue
@@ -217,20 +212,14 @@ class SAST:
                 if ch.loc_range.begin is None or ch.loc_range.end is None:
                     continue
 
-                if ch.loc_range.begin.line < min_line:
-                    min_line = ch.loc_range.begin.line
-                    min_col = ch.loc_range.begin.col
-                    min_loc = ch.loc_range.begin
-                elif ch.loc_range.begin.line == min_line and ch.loc_range.begin.col < min_col:
-                    min_col = min(min_col, ch.loc_range.begin.col)
+                if (ch.loc_range.begin.line
+                        < min_loc.line) or (ch.loc_range.begin.line == min_loc.line
+                                            and ch.loc_range.begin.col < min_loc.col):
                     min_loc = ch.loc_range.begin
 
-                if ch.loc_range.end.line > max_line:
-                    max_line = ch.loc_range.end.line
-                    max_col = ch.loc_range.end.col
-                    max_loc = ch.loc_range.end
-                elif ch.loc_range.end.line == max_line and ch.loc_range.end.col > max_col:
-                    max_col = max(max_col, ch.loc_range.end.col)
+                if (ch.loc_range.end.line
+                        > max_loc.line) or (ch.loc_range.end.line == max_loc.line
+                                            and ch.loc_range.end.col > max_loc.col):
                     max_loc = ch.loc_range.end
             self.loc_range = CodeRange({}, min_loc, max_loc)
 

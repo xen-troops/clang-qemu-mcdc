@@ -9,6 +9,7 @@ TEST_SRCS = \
 	tests/test_nop.c \
 	tests/test_enum.c \
 	tests/test_goto.c \
+	tests/test_locations.c \
 
 
 TEST_BINS = $(TEST_SRCS:.c=)
