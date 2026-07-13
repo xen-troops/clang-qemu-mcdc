@@ -401,6 +401,8 @@ static void vcpu_tb_trans_cb(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             fprintf(stderr,
                     "[ERROR] Configured addr 0x%lx is not a branch and has no register attached!\n",
                     insn_vaddr);
+            g_mutex_unlock(&trace_lock);
+            return;
             g_assert_not_reached();
         }
 
