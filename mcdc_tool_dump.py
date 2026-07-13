@@ -1,23 +1,29 @@
+import argparse
 from mcdc_tool_parser import SAST, ASTEntry
 from mcdc_tool_dwarf import ExprTraceInfo, TracePoint
 from pprint import pprint
 import pickle
 import json
 
-def load_mcdc_data() -> list[SAST]:
-    with open("mcdc.pickle", "rb") as f:
+def load_mcdc_data(filename: str) -> list[SAST]:
+    with open(filename, "rb") as f:
         expressions: SAST = pickle.load(f)
         expressions: SAST = None
         expressions, inlines  = pickle.load(f)
         return expressions
 
-def load_mcdc_dwarf_data() -> list[ExprTraceInfo]:
-    with open("mcdc-dwarf.pickle", "rb") as f:
+def load_mcdc_dwarf_data(filename: str) -> list[ExprTraceInfo]:
+    with open(filename, "rb") as f:
         expressions: ExprTraceInfo = pickle.load(f)
         return expressions
 
 def main():
-    data = load_mcdc_data()
+    parser = argparse.ArgumentParser(description="MC/DC Data Dumper")
+    parser.add_argument("mcdc_pickle", help="Path to the mcdc.pickle file")
+    parser.add_argument("mcdc_dwarf_pickle", help="Path to the mcdc-dwarf.pickle file")
+    args = parser.parse_args()
+
+    data = load_mcdc_data(args.mcdc_pickle)
     # for idx, expr in enumerate(data):
     #     print(idx)
     #     pprint(expr)
@@ -27,7 +33,7 @@ def main():
         print(expr.uuid, expr, expr.loc_range)
     #recurse_dump(0, data[3260].ast)
 
-    dwarf_data = load_mcdc_dwarf_data()
+    dwarf_data = load_mcdc_dwarf_data(args.mcdc_dwarf_pickle)
     print(f"\n\nTotal number of entries after dwarf parse: {len(dwarf_data)}")
     for expr_dwarf in dwarf_data:
         print(str(expr_dwarf))
