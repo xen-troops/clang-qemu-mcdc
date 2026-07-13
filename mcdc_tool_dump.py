@@ -24,7 +24,7 @@ def main():
     #     pprint(expr.ast.data)
     print(f"Total number of entries: {len(data)}")
     for expr in data:
-        print(expr.uuid, expr, expr.has_fcall())
+        print(expr.uuid, expr, expr.loc_range)
     #recurse_dump(0, data[3260].ast)
 
     dwarf_data = load_mcdc_dwarf_data()
