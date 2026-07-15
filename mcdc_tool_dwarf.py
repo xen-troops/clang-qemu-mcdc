@@ -1083,6 +1083,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # Just do the fuzzy matching and hope for best
                 state = handle_operand(operand.left, state)
                 TRACE_MATCH(f"   member_expr target reg = {state.target_reg}")
+                if instructions[state.instr_idx].mnemonic.startswith("ldr"):
+                    TRACE_MATCH("  found another ldr, advancing pointer")
+                    state = state.advance()
                 return state.derive(partial=True)
             case FCall():
                 return handle_fcall(operand, state)
@@ -1092,6 +1095,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         new_state = handle_operand(operand.operands[1], state)
                     case "-":
                         new_state = handle_operand(operand.operands[0], state)
+                    case "*":
+                        new_state = handle_operand(operand.operands[0], state)
+                        if len(operand.operands) == 1:
+                            TRACE_MATCH("  handling pointer")
+                            if instructions[new_state.instr_idx].mnemonic.startswith("ldr"):
+                                new_state = new_state.advance()
                     case _:
                         new_state = handle_operand(operand.operands[0], state)
                 return new_state.derive(partial=True)
