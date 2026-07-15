@@ -6,6 +6,7 @@ import argparse
 from pprint import pprint
 import subprocess
 import pickle
+import multiprocessing
 
 from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
     FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr, EnumConst, StatementExpression, CompoundStmt
@@ -86,26 +87,32 @@ def get_bool_expr_list(
 
     bool_expr: list[BoolExpression] = []
     inline_loc_map: dict[str, list[SFileLocMap]] = {}
-    for entry in db:
-        f: str = entry["file"]
-        work_dir: str = entry.get("directory", os.getcwd())
-        rel_f: str = os.path.relpath(f, work_dir)
+    async_results: list[(str, multiprocessing.AsyncResult)] = []
+    with multiprocessing.Pool() as pool:
+        for entry in db:
+            f: str = entry["file"]
+            work_dir: str = entry.get("directory", os.getcwd())
+            rel_f: str = os.path.relpath(f, work_dir)
 
-        if not f.endswith(".c"):
-            continue
-        if f.startswith("tools/"):
-            continue
-        if f in SOURCE_SKIP_LIST:
-            continue
-        args = entry["arguments"]
-        if f in seen:
-            continue
-        seen.append(f)
-        expr, locs = handle_file(f, args)
-        for e in expr:
-            assert isinstance(e, BoolExpression)
-        bool_expr.extend(expr)
-        inline_loc_map[rel_f] = locs
+            if not f.endswith(".c"):
+                continue
+            if f.startswith("tools/"):
+                continue
+            if f in SOURCE_SKIP_LIST:
+                continue
+            args = entry["arguments"]
+            if f in seen:
+                continue
+            seen.append(f)
+            async_results.append((rel_f, pool.apply_async(handle_file, (f, args))))
+
+        print("Collecting async results...")
+        for ar in async_results:
+            expr, locs = ar[1].get()
+            for e in expr:
+                assert isinstance(e, BoolExpression)
+            bool_expr.extend(expr)
+            inline_loc_map[ar[0]] = locs
     return bool_expr, inline_loc_map
 
 def lift_up_fcalls(expressions: list[SAST]):
