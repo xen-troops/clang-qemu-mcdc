@@ -598,7 +598,7 @@ def get_sizeof(cu: CompileUnit, name: str) -> Optional[int]:
     if name == None:
         global SIZEOF_NONE_CNT
         SIZEOF_NONE_CNT += 1
-        raise Exception("Can't handle None in sizeof")
+        return None
     array_size = 1
     if "[" in name:
         if name[-1] != "]":
