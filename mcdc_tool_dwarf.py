@@ -1270,7 +1270,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     def handle_op_not_tail(e: BoolExpression, state: MatchState) -> MatchState:
         # Return early if we are not trying to handle top-level NOT expression
         if isinstance(e.a, BoolExpression):
-             return state
+            return state
+        state = ff_to_instruction(
+            state, ["cbnz", "tbnz", "b.ne", "cset", "tbz", "cbz", "b.eq", "eor", "bic"])
 
         match instructions[state.instr_idx].mnemonic:
             case "cbnz" | "tbnz" | "b.ne" | "cset":
