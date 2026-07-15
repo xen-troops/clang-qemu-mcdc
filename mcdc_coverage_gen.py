@@ -1,19 +1,16 @@
 import struct
-import sys
 import argparse
 import pickle
 from collections import defaultdict
 from typing import Dict, List, Tuple, Any
 
-from mcdc_tool_definitions import CodeLoc, CodeRange, ASTEntry, SAST, BoolExpression
-from mcdc_tool_dwarf import ExprTraceInfo, TracePoint
 
 class TestVector:
     def __init__(self, outcome, val_mask, eval_mask, exit_target=0,
                  hit_count = 0):
-        self.outcome = outcome   
-        self.val = val_mask      
-        self.eval = eval_mask    
+        self.outcome = outcome
+        self.val = val_mask
+        self.eval = eval_mask
         self.exit = exit_target
         self.hit_count = hit_count
 
@@ -142,10 +139,10 @@ def load_dwarf_data(dwarf_pickle_file) -> dict[str, ExprTraceInfo]:
 def _build_address_maps(dwarf_info) -> Dict[int, Tuple[int, Any]]:
     """Maps hardware addresses to a tuple of (AST leaf index, TracePoint)."""
     addr_map = {}
-    
+
     for idx, tp in enumerate(dwarf_info.trace_points):
         addr_map[tp.addr] = (idx, tp)
-        
+
     return addr_map
 
 
@@ -158,11 +155,11 @@ def _evaluate_test_vectors(
 ) -> List['TestVector']:
     """Injects hardware traces into the AST and resolves outcomes."""
     unique_test_vectors = {}
-    
+
     for var in variants:
         path_signature = var['nodes']
         hit_count = var.get('hit_count', 1)
-        
+
         if path_signature in unique_test_vectors:
             unique_test_vectors[path_signature].hit_count += hit_count
             continue
@@ -192,7 +189,7 @@ def _evaluate_test_vectors(
             continue
 
         overall_outcome = 1 if expr.get_value() else 0
-        
+
         unique_test_vectors[path_signature] = TestVector(
             outcome=overall_outcome,
             val_mask=val_mask,
@@ -216,13 +213,13 @@ def _print_diag(uuid_str: str, test_vectors: List['TestVector']):
     print("-" * 60)
 
 def _find_mcdc_pairs(
-    test_vectors: List['TestVector'], 
+    test_vectors: List['TestVector'],
     leafs: List[Any]
 ) -> List[bool]:
     """Calculates independence pairs to prove MC/DC coverage."""
     num_conditions = len(leafs)
     pairs_found = [False] * num_conditions
-    
+
     true_tvs = [t for t in test_vectors if t.outcome == 1]
     false_tvs = [t for t in test_vectors if t.outcome == 0]
 
@@ -235,7 +232,7 @@ def _find_mcdc_pairs(
                 # Ensure the target condition was evaluated in both vectors
                 if not (t1.eval & target_bit) or not (t2.eval & target_bit):
                     continue
-                    
+
                 # Ensure the condition actually flipped between the vectors
                 if not ((t1.val ^ t2.val) & target_bit):
                     continue
@@ -248,7 +245,7 @@ def _find_mcdc_pairs(
                     pair_found = True
                     pairs_found[i] = True
                     break
-                    
+
             if pair_found:
                 break
 
@@ -281,7 +278,7 @@ def _find_branch_hits(
     return branch_hits
 
 def process_mcdc_coverage(
-    trace_data: Dict[str, Any], 
+    trace_data: Dict[str, Any],
     dwarf_map: Dict[str, Any]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -334,10 +331,10 @@ def _write_file_records(file_handle, filepath: str, expressions: List[Dict]):
         leafs = expr_data['leafs']
         pairs_found = expr_data['pairs_found']
         branch_hits = expr_data['branch_hits']
-        
+
         loc = getattr(expr, 'loc', None)
         line_num = getattr(loc, 'line', 1) if loc else 1
-        
+
         unique_lines.add(line_num)
         num_leafs = len(leafs)
 
@@ -361,8 +358,8 @@ def _write_file_records(file_handle, filepath: str, expressions: List[Dict]):
         # Write MCDC Coverage
         for i, leaf in enumerate(leafs):
             is_covered = 1 if pairs_found[i] else 0
-            
-            expr_str = str(leaf).replace(',', ' ') 
+
+            expr_str = str(leaf).replace(',', ' ')
 
             file_handle.write(
                 f"MCDC:{line_num},{num_leafs},t,{is_covered},{i},{expr_str}\n"
@@ -384,7 +381,7 @@ def _write_file_records(file_handle, filepath: str, expressions: List[Dict]):
 
 
 def generate_lcov(
-    file_coverage: Dict[str, List[Dict]], 
+    file_coverage: Dict[str, List[Dict]],
     output_file: str = "coverage.info"
 ):
     """
@@ -392,10 +389,10 @@ def generate_lcov(
     """
     with open(output_file, 'w') as f:
         f.write("TN:MCDC_Test_Report\n")
-        
+
         for filepath, expressions in file_coverage.items():
             _write_file_records(f, filepath, expressions)
-            
+
     print(f"\n[+] Successfully generated LCOV report at '{output_file}'")
 
 
@@ -404,35 +401,35 @@ def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=("MC/DC Coverage Report Generation Tool ")
     )
-    
+
     parser.add_argument(
-        "trace_files", 
-        nargs='+', 
+        "trace_files",
+        nargs='+',
         help="One or more paths to brtrace.dat files"
     )
     parser.add_argument(
-        "--dwarf", 
-        default="mcdc-dwarf.pickle", 
+        "--dwarf",
+        default="mcdc-dwarf.pickle",
         help="Path to mcdc-dwarf.pickle"
     )
     parser.add_argument(
-        "--lcov", 
-        default="coverage.info", 
+        "--lcov",
+        default="coverage.info",
         help="Output LCOV file name"
     )
-    
+
     return parser.parse_args()
 
 
 def _merge_trace_data(trace_files: List[str]) -> Dict[str, List[Any]]:
     """Parses and merges multiple QEMU trace files into a single dictionary."""
     merged_trace_data = defaultdict(list)
-    
+
     for t_file in trace_files:
         file_data = parse_brtrace(t_file)
         for uuid_str, variants in file_data.items():
             merged_trace_data[uuid_str].extend(variants)
-            
+
     return merged_trace_data
 
 
