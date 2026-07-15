@@ -890,6 +890,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             if func_name.startswith("__builtin_"):
                 TRACE_MATCH(f"Removing builtin prefix for {func_name}")
                 func_name = func_name.removeprefix("__builtin_")
+                if func_name == "bswap32":
+                    state = ff_to_instruction(state, ["rev"])
+                    return state.derive(target_reg=get_instr_reg_operand(
+                        instructions[state.instr_idx], 0)).advance()
             # Try looking in the current CU, in case this is a static function
             func_addr = find_function(cu, func_name)
             if not func_addr:
