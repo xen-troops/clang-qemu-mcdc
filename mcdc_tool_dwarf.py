@@ -1330,6 +1330,10 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         # TBD: Match cset condition flags
                         ret.append(TracePoint(instructions[idx].address, False, e))
                         return new_state.derive(instr_idx=idx + 1)
+                    case "csel":
+                        # TBD: Match cset condition flags
+                        ret.append(TracePoint(instructions[idx].address, False, e))
+                        return new_state.derive(instr_idx=idx + 1)
                     case _:
                         raise MatchError(
                             f"Expected for conditional branch, found {instructions[idx].mnemonic}")
