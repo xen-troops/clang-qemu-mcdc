@@ -249,11 +249,6 @@ def _get_fcalls_in_expr(expr: SAST) -> list[str]:
         ret.extend(_get_fcalls_in_expr(child))
     return ret
 
-def _get_function_name_for_call(expr: FCall) -> Optional[str]:
-    if isinstance(expr.name, NonBoolVar):
-        return None
-    return expr.name.name
-
 def _get_addr_ranges_for_expr(expr: SAST, locations: list[DwarfLoc],
                               inlines: list[DwarfInlinedFunc]) -> list[(int, int)]:
     ret = []
@@ -390,8 +385,7 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
             instructions = list(dis.disasm(data, next_expr.start_addr))
             # Skip inlined functions if we are not interested in these
             fcalls = _get_fcalls_in_expr(next_expr.expr)
-            fnames = [_get_function_name_for_call(fcall) for fcall in fcalls]
-            skip_inlines = _get_inlines_to_skip(next_expr, inlines, fnames)
+            skip_inlines = _get_inlines_to_skip(next_expr, inlines, fcalls)
             TRACE_CU(f"{skip_inlines=}")
             instructions = [
                 insn for insn in instructions if not _addr_inside_inlines(skip_inlines, insn.address)
