@@ -10,6 +10,7 @@ TEST_SRCS = \
 	tests/test_enum.c \
 	tests/test_goto.c \
 	tests/test_locations.c \
+	tests/test_complex_statement_expr.c \
 
 
 TEST_BINS = $(TEST_SRCS:.c=)
@@ -34,6 +35,7 @@ CFLAGS =  -g -O0
 CFLAGS += -target aarch64-unknown-linux-gnu
 CFLAGS += -I /usr/aarch64-linux-gnu/include
 CFLAGS += -std=gnu99 -fno-common -fno-builtin
+CFLAGS += -fverbose-asm
 
 .PHONY: all clean report check
 

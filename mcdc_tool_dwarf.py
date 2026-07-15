@@ -249,6 +249,10 @@ def _get_fcalls_in_expr(expr: SAST) -> list[str]:
         ret.extend(_get_fcalls_in_expr(child))
     return ret
 
+def _get_function_name_for_call(expr: FCall) -> Optional[str]:
+    if isinstance(expr.name, NonBoolVar):
+        return None
+    return expr.name.name
 
 def _get_addr_ranges_for_expr(expr: SAST, locations: list[DwarfLoc],
                               inlines: list[DwarfInlinedFunc]) -> list[(int, int)]:
@@ -342,6 +346,21 @@ FAIL_COUNTER = 0
 ELF_RANGE_FAIL_CNT = 0
 
 
+def _get_inlines_to_skip(expr: ExprAddressData, inlines: list[DwarfInlinedFunc],
+                         used_funcs: list[str]) -> list[DwarfInlinedFunc]:
+
+    ret = []
+    for inline in inlines:
+        # This function is present in expr
+        if inline.name in used_funcs:
+            continue
+        # Inline actually covers all expr
+        if inline.low_addr < expr.start_addr or inline.high_addr > expr.end_addr:
+            continue
+        ret.append(inline)
+    return ret
+
+
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
                s_file_locs: list[SFileLocMap]) -> list[TracePoint]:
     cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
@@ -368,9 +387,16 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
 
 #            raise Exception(f"Can't get data for expr {next_expr}")
         try:
-            ret.append(
-                match_bool_expr(cu, elffile, next_expr.expr,
-                                list(dis.disasm(data, next_expr.start_addr)), inlines))
+            instructions = list(dis.disasm(data, next_expr.start_addr))
+            # Skip inlined functions if we are not interested in these
+            fcalls = _get_fcalls_in_expr(next_expr.expr)
+            fnames = [_get_function_name_for_call(fcall) for fcall in fcalls]
+            skip_inlines = _get_inlines_to_skip(next_expr, inlines, fnames)
+            TRACE_CU(f"{skip_inlines=}")
+            instructions = [
+                insn for insn in instructions if not _addr_inside_inlines(skip_inlines, insn.address)
+            ]
+            ret.append(match_bool_expr(cu, elffile, next_expr.expr, instructions, inlines))
         except TypeError:
             raise
         except Exception as e:
