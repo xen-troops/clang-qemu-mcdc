@@ -265,7 +265,7 @@ def _get_addr_ranges_for_expr(expr: SAST, locations: list[DwarfLoc],
     # of locations. Many optimisatation possibilities here
     start_loc: DwarfLoc = None
     end_loc: DwarfLoc = None
-    TRACE_EXPR_LOCATOR(f"Looking for address ranges for expr {expr}")
+    TRACE_EXPR_LOCATOR(f"Looking for address ranges for expr {expr}, {expr.loc_range=}")
     if _function_name_in_inlines(expr.function_name(), inlines):
         # Hard mode
         TRACE_EXPR_LOCATOR(f"   expression belongs to inlined function {expr.function_name()}")
@@ -401,6 +401,7 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
             raise
         except Exception as e:
             log.warning(f"Got exception {e}. Skipping that expr.")
+            TRACE_CU(traceback.print_exc())
             global FAIL_COUNTER
             FAIL_COUNTER += 1
     return ret
@@ -450,7 +451,7 @@ def _get_variable_loc(die: DIE, addr: int):
         # TODO: Need to proces the whole list
         for entity in parsed_loc:
             print(entity, type(entity))
-        raise NotImplementedError()
+        raise NotImplementedError("Can't handle location expression list")
     return expr_parser.parse_expr(loc_expr)[0]
 
 
@@ -807,7 +808,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 try:
                     return func(arg1, state.derive(instr_idx=offset, target_reg=state.target_reg))
                 except MatchError as e:
-                    TRACE_MATCH(f"   Got exception: {e}")
+                    TRACE_MATCH(f"   Got exception: {e} instruction offset = {offset} from {func}")
                     offset += 1
             raise MatchError(f"Fuzzy matching failed for {state}")
 
