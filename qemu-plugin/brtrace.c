@@ -311,12 +311,12 @@ static void vcpu_tb_trans_cb(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         opcode = GUINT32_FROM_LE(raw_opcode);
 
         g_mutex_lock(&trace_lock);
-        
+
         if ((opcode & BC_OPCODE_MASK) == BC_OPCODE) {
             data->branch_type = BR_COND;
             data->cond_code  = opcode & 0x0F;
 
-            offset = (opcode >> 5) & 0x7FFFF; 
+            offset = (opcode >> 5) & 0x7FFFF;
             if (offset & 0x40000) {
                 offset |= 0xFFF80000;
             }
@@ -327,7 +327,7 @@ static void vcpu_tb_trans_cb(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
             data->is_64bit   = (opcode >> 31) & 1;
             data->reg_idx    = opcode & 0x1F;
 
-            offset = (opcode >> 5) & 0x7FFFF; 
+            offset = (opcode >> 5) & 0x7FFFF;
             if (offset & 0x40000) {
                 offset |= 0xFFF80000;
             }
@@ -384,7 +384,7 @@ static void vcpu_tb_trans_cb(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         }
 
         data->is_decoded = true;
-        
+
         qemu_plugin_register_vcpu_insn_exec_cb(insn, vcpu_exec_cb,
                                                QEMU_PLUGIN_CB_RW_REGS, data);
         g_mutex_unlock(&trace_lock);
@@ -405,7 +405,7 @@ static void vcpu_init_cb(qemu_plugin_id_t id, unsigned int vcpu_index)
             } else if (!strcmp(rd->name, "x29")) {
                 fp_reg = rd->handle;
             }
-            
+
             if (rd->name[0] == 'x' && isdigit(rd->name[1])) {
                 int reg_ind = atoi(&rd->name[1]);
                 if (reg_ind >= 0 && reg_ind <= 30) {
@@ -480,7 +480,7 @@ static void plugin_exit_cb(qemu_plugin_id_t id, void *userdata)
             trace_write(&write_size, sizeof(uint32_t), 1, fp);
             trace_write(write_data, 1, write_size, fp);
         }
-        
+
         g_hash_table_destroy(cpu_trace->running_conditions);
         g_hash_table_destroy(cpu_trace->executed_conditions);
         g_free(cpu_trace);
@@ -548,7 +548,7 @@ static void load_config_file(const char *filename)
             fprintf(stderr, "Missing UUID space separator at : %s\n", line);
             exit(EXIT_FAILURE);
         }
-        
+
         *space = '\0';
         uuid_str = line;
         tokens_str = space + 1;
@@ -588,7 +588,7 @@ static void load_config_file(const char *filename)
             data->cond_end   = block_end;
             data->reg_idx    = reg;
             data->is_64bit   = is_64bit;
-            
+
             memset(data->uuid, 0, UUID_SIZE);
             uuid_len = strlen(uuid_str);
             memcpy(data->uuid, uuid_str, uuid_len > UUID_SIZE ? UUID_SIZE :
@@ -600,7 +600,7 @@ static void load_config_file(const char *filename)
             g_hash_table_insert(target_instructions, key, data);
         }
 
-        g_strfreev(tokens);  
+        g_strfreev(tokens);
     }
 
     fclose(fp);
