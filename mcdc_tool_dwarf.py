@@ -1278,11 +1278,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         match instructions[state.instr_idx].mnemonic:
             case "cbnz" | "tbnz" | "b.ne":
                 match_branch_isntr(instructions[state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
+                ret.append(TracePoint(instructions[state.instr_idx].address, True, e.a))
                 return state.advance(2).derive(partial=True)
             case "tbz" | "cbz" | "b.eq":
                 match_branch_isntr(instructions[state.instr_idx + 1], "b")
-                ret.append(TracePoint(instructions[state.instr_idx].address, True, e.a))
+                ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
                 return state.advance(2).derive(partial=True)
             case "eor" | "bic" | "cset":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
