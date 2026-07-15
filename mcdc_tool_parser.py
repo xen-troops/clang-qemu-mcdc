@@ -126,9 +126,6 @@ def main():
         help="Path to save the generated mcdc.pickle"
     )
 
-    parser.add_argument("output_inlines_pickle",
-                        help="Path to save the generated inline locations pickle")
-
     parser.add_argument(
         "compile_commands",
         help="Path to the compile_commands.json file"
@@ -149,10 +146,7 @@ def main():
         expr.update_location_range()
 
     with open(args.output_pickle, "wb") as f:
-        pickle.dump(expressions, f)
-
-    with open(args.output_inlines_pickle, "wb") as f:
-        pickle.dump(inline_loc_map, f)
+        pickle.dump((expressions, inline_loc_map), f)
 
 def get_bool_expr_per_file(fname: str, args: list[str]):
     def object_hook(data: dict):

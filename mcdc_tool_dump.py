@@ -7,6 +7,8 @@ import json
 def load_mcdc_data() -> list[SAST]:
     with open("mcdc.pickle", "rb") as f:
         expressions: SAST = pickle.load(f)
+        expressions: SAST = None
+        expressions, inlines  = pickle.load(f)
         return expressions
 
 def load_mcdc_dwarf_data() -> list[ExprTraceInfo]:

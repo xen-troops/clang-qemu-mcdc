@@ -1442,16 +1442,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
 #        locations.
 
 
-def load_mcdc_data(expr_file: str,
-                   inline_loc: str) -> tuple[list[SAST], dict[str, list[SFileLocMap]]]:
+def load_mcdc_data(expr_file: str) -> tuple[list[SAST], dict[str, list[SFileLocMap]]]:
     expr: list[BoolExpression] = []
     inline_loc_map: dict[str, list[SFileLocMap]] = {}
 
     with open(expr_file, "rb") as f:
-        expr = pickle.load(f)
-
-    with open(inline_loc, "rb") as f:
-        inline_loc_map = pickle.load(f)
+        expr, inline_loc_map = pickle.load(f)
 
     return expr, inline_loc_map
 
@@ -1463,13 +1459,12 @@ def main():
     parser.add_argument("executable", help="Path to the target executable file")
 
     parser.add_argument("input_pickle", help="Path to the generated pickle file with AST classes")
-    parser.add_argument("inline_pickle", help="Path to the generated pickle with inline locations")
     parser.add_argument("output_pickle", help="Path to pickle file to save ExpressionInfo data")
     parser.add_argument("out_plugin_conf", help="Path to pickle file to save ExpressionInfo data")
 
     args = parser.parse_args()
 
-    mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle, args.inline_pickle)
+    mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle)
     process_elf(args.executable, mcdc_data, iniline_loc, args.output_pickle, args.out_plugin_conf)
     log.info(f"FAIL_COUNTER = {FAIL_COUNTER}")
     log.info(f"ELF_RANGE_FAIL_CNT = {ELF_RANGE_FAIL_CNT}")
