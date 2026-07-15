@@ -35,7 +35,6 @@ CFLAGS =  -g -O0
 CFLAGS += -target aarch64-unknown-linux-gnu
 CFLAGS += -I /usr/aarch64-linux-gnu/include
 CFLAGS += -std=gnu99 -fno-common -fno-builtin
-CFLAGS += -fverbose-asm
 
 .PHONY: all clean report check
 

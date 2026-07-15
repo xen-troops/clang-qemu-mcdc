@@ -27,11 +27,6 @@ def filter_same_expr(expressions: list[SAST]):
 
 
 SOURCE_SKIP_LIST = [
-    "arch/arm/arm64/lib/bitops.c",
-    "./arch/arm/include/asm/arm64/system.h",
-    "./arch/arm/include/asm/atomic.h",
-    "./arch/arm/include/asm/cpuerrata.h:30",
-    "./arch/arm/include/asm/flushtlb.h",  #TODO: For this one we probably can disable some optimisation...
 ]
 
 
