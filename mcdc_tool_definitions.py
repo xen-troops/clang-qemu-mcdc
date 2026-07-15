@@ -167,6 +167,8 @@ class SAST:
         self._bool_const_val: Optional[bool] = None
         self.uuid = str(uuid.uuid4())
 
+        self.value: Optional[bool] = None
+
         for child in self.inner:
             if child is not None:
                 child.parent = self
@@ -285,6 +287,23 @@ class SAST:
 
     def function_name(self) -> str:
         return self._function_name
+
+    def set_value(self, value: bool) -> bool:
+        """Allows any C expression to act as an implicit boolean leaf."""
+        self.value = value
+        if self.parent and hasattr(self.parent, 'child_updated'):
+            return self.parent.child_updated()
+        return True
+
+    def get_value(self) -> Optional[bool]:
+        return getattr(self, 'value', None)
+
+    def reset_value(self) -> None:
+        self.value = None
+        if getattr(self, 'inner', None):
+            for child in self.inner:
+                if hasattr(child, 'reset_value'):
+                    child.reset_value()
 
 
 class NonBoolVar(SAST):
