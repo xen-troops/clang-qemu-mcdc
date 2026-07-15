@@ -1279,7 +1279,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             case "tbz" | "cbz" | "b.eq":
                 ret.append(TracePoint(instructions[state.instr_idx].address, True, e.a))
                 return state.advance().derive(partial=True)
-            case "eor":
+            case "eor" | "bic":
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e.a))
                 return state.advance().derive(partial=True)
             case mnemonic:
