@@ -842,6 +842,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             state.instr_idx += 1
         return state
 
+    def match_optional_mov(state: MatchState) -> MatchState:
+        instr = instructions[state.instr_idx]
+        if instr.mnemonic in ("mov", "movz"):
+            state.instr_idx += 1
+        return state
+
     def ff_to_instruction(state: MatchState, instr: list[str]) -> MatchState:
         skip = state.instr_idx
         while skip < len(instructions):
@@ -1301,6 +1307,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = match_optional_bool_cast(new_state)
 
                 new_state = match_optional_zero_mov(new_state)
+                new_state = match_optional_mov(new_state)
 
                 idx = new_state.instr_idx
                 # Optional subs:
