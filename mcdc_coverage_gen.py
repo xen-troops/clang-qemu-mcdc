@@ -281,11 +281,9 @@ def process_mcdc_coverage(
     """
     file_coverage = defaultdict(list)
 
-    for uuid_str, variants in trace_data.items():
-        if uuid_str not in dwarf_map:
-            continue
+    for uuid_str, dwarf_info_list in dwarf_map.items():
+        variants = trace_data.get(uuid_str, [])
 
-        dwarf_info_list = dwarf_map[uuid_str]
         expr = dwarf_info_list[0].expr
 
         leafs = expr.get_leafs()
@@ -305,12 +303,15 @@ def process_mcdc_coverage(
 
         branch_hits = _find_branch_hits(test_vectors, len(leafs))
 
+        total_hits = sum(v.get('hit_count', 1) for v in variants)
+
         if getattr(expr, 'loc', None) and getattr(expr.loc, 'file', None):
             file_coverage[expr.loc.file].append({
                 'expr': expr,
                 'leafs': leafs,
                 'pairs_found': pairs_found,
-                'branch_hits': branch_hits
+                'branch_hits': branch_hits,
+                'total_hits': total_hits
             })
 
     return file_coverage
@@ -319,62 +320,66 @@ def _write_file_records(file_handle, filepath: str, expressions: List[Dict]):
     """Writes the LCOV formatted coverage data for a single source file."""
     file_handle.write(f"SF:{filepath}\n")
 
-    unique_lines = set()
+    expressions_by_line = defaultdict(list)
+    for expr_data in expressions:
+        loc = getattr(expr_data['expr'], 'loc', None)
+        line_num = getattr(loc, 'line', 1) if loc else 1
+        expressions_by_line[line_num].append(expr_data)
 
     branches_found = 0
     branches_hit = 0
+    line_hits = defaultdict(int)
 
-    for expr_data in expressions:
-        expr = expr_data['expr']
-        leafs = expr_data['leafs']
-        pairs_found = expr_data['pairs_found']
-        branch_hits = expr_data['branch_hits']
+    for line_num in sorted(expressions_by_line.keys()):
+        line_branch_id = 0
+        line_mcdc_id = 0
 
-        loc = getattr(expr, 'loc', None)
-        line_num = getattr(loc, 'line', 1) if loc else 1
+        for expr_data in expressions_by_line[line_num]:
+            expr = expr_data['expr']
+            leafs = expr_data['leafs']
+            pairs_found = expr_data['pairs_found']
+            branch_hits = expr_data['branch_hits']
+            total_hits = expr_data['total_hits']
 
-        unique_lines.add(line_num)
-        num_leafs = len(leafs)
+            line_hits[line_num] += total_hits
+            num_leafs = len(leafs)
 
-        # Write Branch Coverage
-        branch_id = 0
-        for true_hits, false_hits in branch_hits:
-            file_handle.write(
-                f"BRDA:{line_num},0,{branch_id},{true_hits}\n"
-            )
-            branch_id += 1
+            mcdc_group_id = line_mcdc_id
+            line_mcdc_id += 1
 
-            file_handle.write(
-                f"BRDA:{line_num},0,{branch_id},{false_hits}\n"
-            )
-            branch_id += 1
+            # Write Branch Coverage
+            for true_hits, false_hits in branch_hits:
+                t_val = true_hits if total_hits > 0 else "-"
+                f_val = false_hits if total_hits > 0 else "-"
 
-            branches_found += 2
-            branches_hit += (1 if true_hits > 0 else 0)
-            branches_hit += (1 if false_hits > 0 else 0)
+                file_handle.write(f"BRDA:{line_num},0,{line_branch_id},{t_val}\n")
+                line_branch_id += 1
 
-        # Write MCDC Coverage
-        for i, leaf in enumerate(leafs):
-            is_covered = 1 if pairs_found[i] else 0
+                file_handle.write(f"BRDA:{line_num},0,{line_branch_id},{f_val}\n")
+                line_branch_id += 1
 
-            expr_str = str(leaf).replace(',', ' ')
+                branches_found += 2
+                branches_hit += (1 if true_hits > 0 else 0)
+                branches_hit += (1 if false_hits > 0 else 0)
 
-            file_handle.write(
-                f"MCDC:{line_num},{num_leafs},t,{is_covered},{i},{expr_str}\n"
-            )
-            file_handle.write(
-                f"MCDC:{line_num},{num_leafs},f,{is_covered},{i},{expr_str}\n"
-            )
+            # Write MCDC Coverage
+            for i, leaf in enumerate(leafs):
+                is_covered = 1 if pairs_found[i] else 0
+                expr_str = str(leaf).replace(',', ' ')
 
-    # WA: Write executed line data
-    for line in sorted(unique_lines):
-        file_handle.write(f"DA:{line},1\n")
+                file_handle.write(f"MCDC:{line_num},{mcdc_group_id},t,{is_covered},{i},{expr_str}\n")
+                file_handle.write(f"MCDC:{line_num},{mcdc_group_id},f,{is_covered},{i},{expr_str}\n")
+
+    # Write executed line data
+    for line in sorted(expressions_by_line.keys()):
+        file_handle.write(f"DA:{line},{line_hits[line]}\n")
 
     file_handle.write(f"BRF:{branches_found}\n")
     file_handle.write(f"BRH:{branches_hit}\n")
 
-    file_handle.write(f"LF:{len(unique_lines)}\n")
-    file_handle.write(f"LH:{len(unique_lines)}\n")
+    file_handle.write(f"LF:{len(expressions_by_line)}\n")
+    lines_hit = sum(1 for line in expressions_by_line if line_hits[line] > 0)
+    file_handle.write(f"LH:{lines_hit}\n")
     file_handle.write("end_of_record\n")
 
 
