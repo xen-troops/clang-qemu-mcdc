@@ -27,9 +27,17 @@ static inline __attribute__((__always_inline__)) int inline_func(int x)
 	x_.val;						\
 	})
 
-int main(void)
+
+int test_func()
 {
 	if (complex_macro(4) == 8)
 		return 1;
+	return 0;
+}
+
+int main(void)
+{
+	test_func();
+
 	return 0;
 }
