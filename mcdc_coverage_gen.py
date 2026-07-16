@@ -293,15 +293,20 @@ def process_mcdc_coverage(
             for idx, tp in enumerate(dwarf_info.trace_points):
                 addr_map[tp.addr] = (idx, tp)
 
-        test_vectors = _evaluate_test_vectors(
-            uuid_str, variants, expr, leafs, addr_map
-        )
+        try:
+            test_vectors = _evaluate_test_vectors(
+                uuid_str, variants, expr, leafs, addr_map
+            )
 
-        _print_diag(uuid_str, test_vectors)
+            _print_diag(uuid_str, test_vectors)
 
-        pairs_found = _find_mcdc_pairs(test_vectors, leafs)
+            pairs_found = _find_mcdc_pairs(test_vectors, leafs)
 
-        branch_hits = _find_branch_hits(test_vectors, len(leafs))
+            branch_hits = _find_branch_hits(test_vectors, len(leafs))
+        except Exception as e:
+            print(f"  [!] Skipping evaluation for '{expr}' due to error: {e}")
+            continue
+
 
         total_hits = sum(v.get('hit_count', 1) for v in variants)
 
