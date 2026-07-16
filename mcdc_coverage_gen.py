@@ -4,6 +4,7 @@ import pickle
 from collections import defaultdict
 from typing import Dict, List, Tuple, Any
 
+from mcdc_tool_dwarf import ExprTraceInfo, TracePoint
 
 class TestVector:
     def __init__(self, outcome, val_mask, eval_mask, exit_target=0,
