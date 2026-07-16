@@ -7,7 +7,6 @@ import json
 
 def load_mcdc_data(filename: str) -> list[SAST]:
     with open(filename, "rb") as f:
-        expressions: SAST = pickle.load(f)
         expressions: SAST = None
         expressions, inlines  = pickle.load(f)
         return expressions
