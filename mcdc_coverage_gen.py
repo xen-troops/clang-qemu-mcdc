@@ -131,20 +131,14 @@ def parse_brtrace(trace_file: str) -> Dict[str, List[Dict[str, Any]]]:
     return conditions
 
 
-def load_dwarf_data(dwarf_pickle_file) -> dict[str, ExprTraceInfo]:
+def load_dwarf_data(dwarf_pickle_file) -> dict[str, List[ExprTraceInfo]]:
     with open(dwarf_pickle_file, "rb") as f:
         dwarf_infos = pickle.load(f)
-    return {info.expr.uuid: info for info in dwarf_infos}
 
-
-def _build_address_maps(dwarf_info) -> Dict[int, Tuple[int, Any]]:
-    """Maps hardware addresses to a tuple of (AST leaf index, TracePoint)."""
-    addr_map = {}
-
-    for idx, tp in enumerate(dwarf_info.trace_points):
-        addr_map[tp.addr] = (idx, tp)
-
-    return addr_map
+    dwarf_map = defaultdict(list)
+    for info in dwarf_infos:
+        dwarf_map[info.expr.uuid].append(info)
+    return dwarf_map
 
 
 def _evaluate_test_vectors(
@@ -280,7 +274,7 @@ def _find_branch_hits(
 
 def process_mcdc_coverage(
     trace_data: Dict[str, Any],
-    dwarf_map: Dict[str, Any]
+    dwarf_map: Dict[str, List[Any]]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Evaluates coverage by mapping QEMU traces to DWARF AST representations.
@@ -291,12 +285,15 @@ def process_mcdc_coverage(
         if uuid_str not in dwarf_map:
             continue
 
-        dwarf_info = dwarf_map[uuid_str]
-        expr = dwarf_info.expr
+        dwarf_info_list = dwarf_map[uuid_str]
+        expr = dwarf_info_list[0].expr
 
         leafs = expr.get_leafs()
 
-        addr_map = _build_address_maps(dwarf_info)
+        addr_map = {}
+        for dwarf_info in dwarf_info_list:
+            for idx, tp in enumerate(dwarf_info.trace_points):
+                addr_map[tp.addr] = (idx, tp)
 
         test_vectors = _evaluate_test_vectors(
             uuid_str, variants, expr, leafs, addr_map
