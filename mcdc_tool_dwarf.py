@@ -923,21 +923,17 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             raise MatchError(f"Can't find function pointer call instruction for {operand.fname}")
 
     def handle_int_const(value: int, state: MatchState):
-        instr = instructions[state.instr_idx]
         if value == 0 or value == 1:
+            block_end = ff_to_instruction(state, ["b"])
+            instr = instructions[block_end.instr_idx - 1]
             if instr.mnemonic in ("cbnz", "cbz", "tbz", "tbnz"):
                 TRACE_MATCH(f"  found {instr.mnemonic}, passing control to caller")
                 # Let caller handle that case
-                return state.derive(int_const=value)
+                return block_end.derive(instr_idx=block_end.instr_idx -1 , int_const=value)
 
         # Try to feed forward (for simple cases at least)
         if state.partial:
-            idx = state.instr_idx
-            while idx < len(instructions):
-                if instructions[idx].mnemonic in ("subs", "adds"):
-                    state = state.derive(instr_idx=idx)
-                    break
-                idx += 1
+            state = ff_to_instruction(state, ["subs", "adds"])
 
         match instructions[state.instr_idx].mnemonic:
             case "subs" | "adds":
