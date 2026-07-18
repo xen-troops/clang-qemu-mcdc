@@ -11,6 +11,7 @@ from elftools.dwarf.lineprogram import LineProgram, LineState
 from elftools.dwarf.die import DIE
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
+from elftools.dwarf.ranges import RangeEntry, BaseAddressEntry
 from mcdc_tool_definitions import (SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar,
                                    FCall, MemberExpr, SizeOf, CCast, IntLiteral, ArraySubscript,
                                    EnumConst)
@@ -546,6 +547,35 @@ def get_enum_value(cu: CompileUnit, name: str) -> Optional[int]:
                     return val.attributes["DW_AT_const_value"].value
     return None
 
+@dataclass(repr=False)
+class DWARFRange:
+    low_pc: int
+    high_pc: int
+    def __repr__(self) -> str:
+        return f"<DWARFRange {self.low_pc:x} - {self.high_pc:x}>"
+
+def _parse_dw_at_ranges(attr, cu: CompileUnit) -> list[DWARFRange]:
+    range_lists = cu.dwarfinfo.range_lists()
+    rl = range_lists.get_range_list_at_offset(attr.value, cu)
+    ret = []
+    base_addr: int = 0
+    for entry in rl:
+        match(entry):
+            case BaseAddressEntry():
+                base_addr = entry.base_address
+            case RangeEntry():
+                if entry.is_absolute:
+                    raise NotImplementedError("Can't handle absolute RangeEntry")
+                ret.append(DWARFRange(base_addr + entry.begin_offset, base_addr + entry.end_offset))
+    return ret
+
+def _simple_range_to_ranges(die: DIE) -> list[DWARFRange]:
+    low_pc = die.attributes["DW_AT_low_pc"].value
+    high_pc = die.attributes["DW_AT_high_pc"].value
+    if die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
+        high_pc += low_pc - 4
+
+    return [DWARFRange(low_pc, high_pc)]
 
 def get_variable_in_func(func_die: DIE, addr: int, name: str, frame_base: Optional[str] = None):
     # Ugh, inlined function
@@ -554,14 +584,14 @@ def get_variable_in_func(func_die: DIE, addr: int, name: str, frame_base: Option
 
     if "DW_AT_ranges" in func_die.attributes:
         # TODO
-        log.warning("Skipping DIE because it has non-contigous ranges")
-        return None
-    low_pc = func_die.attributes["DW_AT_low_pc"].value
-    high_pc = func_die.attributes["DW_AT_high_pc"].value
-    if func_die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
-        high_pc += low_pc - 4
+        ranges = _parse_dw_at_ranges(func_die.attributes["DW_AT_ranges"], func_die.cu)
+    else:
+        ranges = _simple_range_to_ranges(func_die)
 
-    if addr < low_pc or addr > high_pc:
+    for range in ranges:
+        if addr >= range.low_pc and addr <= range.high_pc:
+            break
+    else:
         return None
 
     best_match = None
