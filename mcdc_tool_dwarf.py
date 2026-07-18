@@ -941,10 +941,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # Try looking in in global symbol table
                 func_addr = find_symbol(elf, func_name)
                 if not func_addr:
-                    raise Exception(f"Can't find address for function {operand.fname.name}")
+                    TRACE_MATCH(f"Can't find address for function {operand.fname.name}, probably pointer")
             for idx in range(state.instr_idx, len(instructions)):
                 instr = instructions[idx]
-                if instr.mnemonic == "bl" and instr.operands[0].value.imm == func_addr:
+                if (instr.mnemonic == "bl" and func_addr
+                        and instr.operands[0].value.imm == func_addr) or (instr.mnemonic == "blr"
+                                                                          and not func_addr):
                     instr = instructions[idx + 1]
                     if instr.mnemonic == "ldr":
                         # Match ldr x8, [sp]
