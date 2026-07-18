@@ -395,7 +395,9 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
             raise
         except Exception as e:
             log.warning(f"Got exception {e}. Skipping that expr.")
-            TRACE_CU(traceback.print_exc())
+            TRACE_CU(traceback.format_exc())
+            if FAIL_FAST:
+                raise e
             global FAIL_COUNTER
             FAIL_COUNTER += 1
     return ret
@@ -1408,6 +1410,7 @@ def load_mcdc_data(expr_file: str) -> tuple[list[SAST], dict[str, list[SFileLocM
 
     return expr, inline_loc_map
 
+FAIL_FAST = False
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
@@ -1419,12 +1422,19 @@ def main():
     parser.add_argument("output_pickle", help="Path to pickle file to save ExpressionInfo data")
     parser.add_argument("out_plugin_conf", help="Path to pickle file to save ExpressionInfo data")
     parser.add_argument("-c", "--compile_unit", help="Compile Unit to process")
+    parser.add_argument("--fail", help="Fail at first error (do not continue)", action="store_true")
 
     args = parser.parse_args()
 
     mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle)
+
+    global FAIL_FAST
+    FAIL_FAST = args.fail
+
     process_elf(args.executable, mcdc_data, iniline_loc, args.output_pickle, args.out_plugin_conf,
                 args.compile_unit)
+
+
     log.info(f"FAIL_COUNTER = {FAIL_COUNTER}")
     log.info(f"ELF_RANGE_FAIL_CNT = {ELF_RANGE_FAIL_CNT}")
     log.info(f"SIZEOF_NONE_CNT (included in FAIL_COUNTER) = {SIZEOF_NONE_CNT}")
