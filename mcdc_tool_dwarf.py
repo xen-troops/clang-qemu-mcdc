@@ -912,6 +912,9 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     # Find idx for end address
                 for idx in range(idx, len(instructions)):
                     if instructions[idx].address == inline.high_addr:
+                        if instructions[idx].mnemonic == "bl":
+                            # Tailcall optimisatation, thanks LLVM!
+                            return state.derive(instr_idx=idx + 1, target_reg="x0", partial=False)
                         target_reg = get_instr_reg_operand(instructions[idx], 0)
                         return state.derive(instr_idx=idx + 1, target_reg=target_reg, partial=False)
                 raise Exception("End of inlined function is past expression range?")
