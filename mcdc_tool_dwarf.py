@@ -353,7 +353,11 @@ def _get_inlines_to_skip(expr: ExprAddressData, inlines: list[DwarfInlinedFunc],
         # Inline actually covers all expr
         if inline.low_addr < expr.start_addr or inline.high_addr > expr.end_addr:
             continue
-        ret.append(inline)
+
+        # XXX: Make sure that we'll keep end of inlined function
+        c = copy(inline)
+        c.high_addr =-4
+        ret.append(c)
     return ret
 
 
