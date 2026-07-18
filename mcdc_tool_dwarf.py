@@ -964,7 +964,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
             raise MatchError(f"Can't find function pointer call instruction for {operand.fname}")
 
     def handle_int_const(value: int, state: MatchState):
-        if value == 0 or value == 1:
+        if value in (0, 1, 2147483647):
             block_end = ff_to_instruction(state, ["b"])
             instr = instructions[block_end.instr_idx - 1]
             if instr.mnemonic in ("cbnz", "cbz", "tbz", "tbnz"):
