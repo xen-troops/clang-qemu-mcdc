@@ -1160,8 +1160,14 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     case "*":
                         new_state = handle_operand(operand.operands[0], state)
                         if len(operand.operands) == 1:
-                            TRACE_MATCH("  handling pointer")
+                            TRACE_MATCH("  handling dereference")
                             if instructions[new_state.instr_idx].mnemonic.startswith("ldr"):
+                                new_state = new_state.advance()
+                    case "&":
+                        new_state = handle_operand(operand.operands[0], state)
+                        if len(operand.operands) == 1:
+                            TRACE_MATCH("  handling reference")
+                            if instructions[new_state.instr_idx].mnemonic.startswith("add"):
                                 new_state = new_state.advance()
                     case _:
                         new_state = handle_operand(operand.operands[0], state)
