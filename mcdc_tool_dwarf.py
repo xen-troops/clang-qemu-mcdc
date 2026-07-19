@@ -1155,6 +1155,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         new_state = handle_operand(operand.operands[1], state)
                     case "-":
                         new_state = handle_operand(operand.operands[0], state)
+                    case "~":
+                        new_state = state
                     case "*":
                         new_state = handle_operand(operand.operands[0], state)
                         if len(operand.operands) == 1:
