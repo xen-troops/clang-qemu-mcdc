@@ -983,7 +983,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
         if state.partial:
             state = ff_to_instruction(state, ["subs", "adds"])
 
-        match instructions[state.instr_idx].mnemonic:
+        instr = instructions[state.instr_idx]
+        match instr.mnemonic:
             case "subs" | "adds":
                 # TODO: We need to simplify expressions first.
                 # Like <IntLiteral 8> * <IntLiteral 8> == <IntLiteral 64>
