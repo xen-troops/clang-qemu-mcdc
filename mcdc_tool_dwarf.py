@@ -948,10 +948,15 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         and instr.operands[0].value.imm == func_addr) or (instr.mnemonic == "blr"
                                                                           and not func_addr):
                     instr = instructions[idx + 1]
+                    target_reg = "x0"
                     if instr.mnemonic == "ldr":
                         # Match ldr x8, [sp]
                         idx += 1
-                    return state.derive(instr_idx=idx + 1, target_reg="x0", partial=False)
+                    if instr.mnemonic == "mov":
+                        # Match mov w8, w0
+                        idx += 1
+                        target_reg = get_instr_reg_operand(instructions[idx], 0)
+                    return state.derive(instr_idx=idx + 1, target_reg=target_reg, partial=False)
             else:
                 raise MatchError("Can't find function call")
         else:
