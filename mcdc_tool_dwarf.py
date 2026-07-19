@@ -981,7 +981,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 return block_end.derive(instr_idx=block_end.instr_idx -1 , int_const=value)
 
         # Try to feed forward (for simple cases at least)
-        if state.partial:
+        if state.partial or not value:
             state = ff_to_instruction(state, ["subs", "adds"])
 
         instr = instructions[state.instr_idx]
