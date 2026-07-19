@@ -1226,6 +1226,15 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 case mnemonic:
                     TRACE_MATCH(f"Skipping {mnemonic} at {instructions[new_state.instr_idx].address:x}")
 
+        if isinstance(e.b, IntLiteral):
+            TRACE_MATCH("Ignoring const value as part of AND/OR expression")
+            return new_state
+
+        if isinstance(e.b, BoolExpression) and e.b.op == BoolExpression.OP_NOT and isinstance(
+                e.b.a, IntLiteral):
+            TRACE_MATCH("Ignoring NOT(const value) as part of AND/OR expression")
+            return new_state
+
         new_state = handle_operand(e.b, new_state)
         new_state = match_optional_store(new_state)
 
