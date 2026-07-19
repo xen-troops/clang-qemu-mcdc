@@ -1143,7 +1143,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 # Just do the fuzzy matching and hope for best
                 state = handle_operand(operand.left, state)
                 TRACE_MATCH(f"   member_expr target reg = {state.target_reg}")
-                if instructions[state.instr_idx].mnemonic.startswith("ldr"):
+                if instructions[state.instr_idx].mnemonic.startswith("ldr") and operand.arrow:
                     TRACE_MATCH("  found another ldr, advancing pointer")
                     state = state.advance()
                 return state.derive(partial=True)
