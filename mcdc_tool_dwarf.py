@@ -1304,7 +1304,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 inverted = op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(TracePoint(instructions[new_state.instr_idx].address, inverted, e))
-            case "b.gt" | "b.ge" | "b.hs" | "b.hi":
+            case "b.gt" | "b.ge" | "b.hs" | "b.hi" | "b.ne":
                 inverted = not op_is_gt_ge
                 match_branch_isntr(instructions[new_state.instr_idx + 1], "b")
                 ret.append(TracePoint(instructions[new_state.instr_idx].address, inverted, e))
