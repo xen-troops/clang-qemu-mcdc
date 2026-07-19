@@ -1128,7 +1128,7 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 )
                 val = get_sizeof(cu, operand.argtype)
                 if val == None:
-                    raise Exception(f"Can't find integer value for sizeof({operand.argtype})")
+                    log.warning(f"Can't find integer value for sizeof({operand.argtype})")
                 return handle_int_const(val, state)
 
             case BoolExpression():
