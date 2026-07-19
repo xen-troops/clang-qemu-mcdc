@@ -156,9 +156,9 @@ def _collect_inlines(cu: CompileUnit) -> list[DwarfInlinedFunc]:
             if child.tag == "DW_TAG_inlined_subroutine":
                 func_info = child.get_DIE_from_attribute("DW_AT_abstract_origin")
                 low_pc = child.attributes["DW_AT_low_pc"].value
-                high_pc = child.attributes["DW_AT_high_pc"].value
+                high_pc = child.attributes["DW_AT_high_pc"].value - 4
                 if child.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
-                    high_pc += low_pc - 4
+                    high_pc += low_pc
                 if not "DW_AT_name" in func_info.attributes:
                     # Some internal compiller stuff?
                     continue
@@ -575,9 +575,9 @@ def _parse_dw_at_ranges(attr, cu: CompileUnit) -> list[DWARFRange]:
 
 def _simple_range_to_ranges(die: DIE) -> list[DWARFRange]:
     low_pc = die.attributes["DW_AT_low_pc"].value
-    high_pc = die.attributes["DW_AT_high_pc"].value
+    high_pc = die.attributes["DW_AT_high_pc"].value - 4
     if die.attributes["DW_AT_high_pc"].form == "DW_FORM_data4":
-        high_pc += low_pc - 4
+        high_pc += low_pc
 
     return [DWARFRange(low_pc, high_pc)]
 
