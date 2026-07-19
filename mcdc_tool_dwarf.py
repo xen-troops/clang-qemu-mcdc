@@ -796,6 +796,7 @@ class MatchState:
     partial: bool = False
     last_seen_var: Optional[str] = None
     int_const: Optional[int] = None
+    saw_per_cpu: bool = False
 
     def derive(self, **kwargs: Unpack[MatchState]):
         ret = copy(self)
@@ -1071,11 +1072,25 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     case "adr":
                         match_instr_const_operand(instr, 1, abs_addr)
                         reg = get_instr_reg_operand(instr, 0)
+                        TRACE_MATCH(f"  Found read at 0x{instr.address:x}")
                         return state.derive(instr_idx=state.instr_idx + 1, target_reg=reg)
+                    case "ldr":
+                        # This is a hack to handle compiler optimisation
+                        return state.derive(instr_idx=state.instr_idx + 1,
+                                            target_reg=aarch64_reg_name(instr.operands[0].reg),
+                                            last_seen_var=operand.name)
+
                     case mnemonic:
                         raise MatchError(f"Don't know how to handle {mnemonic} (addrx)")
 
             case "DW_OP_breg31":
+                TRACE_MATCH("  DW_OP_breg31 aka SP")
+                # Special case for RELOC_HIDE()
+                if operand.name == "__ptr":
+                    state = ff_to_instruction(state, ["mrs"])
+                    if instructions[state.instr_idx].mnemonic == "mrs":
+                        state = state.derive(saw_per_cpu=True).advance()
+                    return state
                 target_reg = "sp"
                 offset = v.arg
                 instr = instructions[state.instr_idx]
@@ -1365,6 +1380,8 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 new_state = match_optional_zero_mov(new_state)
                 new_state = match_optional_mov(new_state)
 
+                if new_state.saw_per_cpu:
+                    new_state = ff_to_instruction(new_state, ["subs", "adds"])
                 idx = new_state.instr_idx
                 # Optional subs/adds:
                 if instructions[idx].mnemonic in ("subs", "adds"):
