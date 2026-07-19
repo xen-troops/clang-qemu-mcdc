@@ -1029,6 +1029,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                         target_reg = "x29"
                     case _:
                         raise Exception(f"TODO: Match reg {v.frame_base}")
+                # Special case for RELOC_HIDE()
+                if operand.name == "__ptr":
+                    state = ff_to_instruction(state, ["mrs"])
+                    if instructions[state.instr_idx].mnemonic == "mrs":
+                        state = state.derive(saw_per_cpu=True).advance()
+                    return state
                 offset = v.arg
                 instr = instructions[state.instr_idx]
                 try:
