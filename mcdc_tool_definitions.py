@@ -682,6 +682,21 @@ class FCall(SAST):
             self.inner[idx + 1] = FCallArg(arg.loc)
         return ret
 
+    def _str_name(self) -> Optional[str]:
+        if not isinstance(self.fname, NonBoolVar):
+            return None
+        return self.fname.name
+
+    def is_const(self) -> bool:
+        self._is_const = False
+
+        match self._str_name():
+            case "is_pv_domain":
+                self._is_const = True
+                self._bool_const_val = False
+
+        return self._is_const
+
 
 class FCallArg(SAST):
     """Placeholder for functinal call argument, as we in fact are not interested in its value"""

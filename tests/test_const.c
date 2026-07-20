@@ -1,6 +1,11 @@
 /* Test for const expressions */
 #include <stdbool.h>
 
+bool is_pv_domain(void)
+{
+	return false;
+}
+
 bool function_that_accepts_bool(bool x)
 {
 	return !x;
@@ -68,6 +73,9 @@ void test_half_const_expressions(void)
 		return;
 
 	if (true || y < x)
+		return;
+
+	if (is_pv_domain() && y < x)
 		return;
 }
 
