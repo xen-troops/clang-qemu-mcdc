@@ -681,6 +681,22 @@ def get_instr_reg_operand(instr: capstone.CsInsn, idx: int) -> str:
         raise MatchError(f"{idx}'th operand is not a register: {instr.operands[idx].type}")
     return aarch64_reg_name(instr.operands[idx].reg)
 
+def get_instr_operand_offset(instr: capstone.CsInsn, idx: int) -> int:
+    if idx >= len(instr.operands):
+        raise MatchError(
+            f"Tried to match {idx}'th operand, but op has only {len(instr.operands)} operands")
+    if instr.operands[idx].type != capstone.arm64_const.ARM64_OP_MEM:
+        raise MatchError(f"{idx}'th operand is not a memory: {instr.operands[idx].type}")
+    return instr.operands[idx].value.mem.disp
+
+def get_instr_operand_base_reg(instr: capstone.CsInsn, idx: int) -> int:
+    if idx >= len(instr.operands):
+        raise MatchError(
+            f"Tried to match {idx}'th operand, but op has only {len(instr.operands)} operands")
+    if instr.operands[idx].type != capstone.arm64_const.ARM64_OP_MEM:
+        raise MatchError(f"{idx}'th operand is not a memory: {instr.operands[idx].type}")
+    return instr.operands[idx].value.mem.base
+
 
 def get_adrp_addr(instr: capstone.CsInsn) -> int:
     if instr.mnemonic != "adrp":
@@ -951,8 +967,16 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                     instr = instructions[idx + 1]
                     target_reg = "x0"
                     if instr.mnemonic == "ldr":
-                        # Match ldr x8, [sp]
-                        idx += 1
+                        # Match ldr x8, [sp, #offset] if we saw store to that pos earlier
+                        base_reg = get_instr_operand_offset(instr, 1)
+                        reg_offset = get_instr_operand_offset(instr, 1)
+                        for idx2 in range(idx, 0, -1):
+                            instr2 = instructions[idx2]
+                            if instr2.mnemonic == "str" and get_instr_operand_offset(
+                                    instr2, 1) == base_reg and get_instr_operand_offset(
+                                        instr2, 1) == reg_offset:
+                                idx += 1
+                                break
                     if instr.mnemonic == "mov":
                         # Match mov w8, w0
                         idx += 1
