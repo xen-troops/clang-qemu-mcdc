@@ -813,6 +813,7 @@ class MatchState:
     last_seen_var: Optional[str] = None
     int_const: Optional[int] = None
     saw_per_cpu: bool = False
+    implicit_cast_one_more_try: bool = False
 
     def derive(self, **kwargs: Unpack[MatchState]):
         ret = copy(self)
@@ -1375,6 +1376,12 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
                 ret.append(TracePoint(instructions[state.instr_idx].address, False, e))
                 return state.advance()
             case mnemonic:
+                if not state.implicit_cast_one_more_try:
+                    # Try previous instruction as inlines sometimes span to
+                    # part that makes a cast
+                    return handle_implicit_cast_tail(
+                        e,
+                        state.advance(-1).derive(implicit_cast_one_more_try=True))
                 raise MatchError(
                     f"Don't know how to handle implicit bool cast instruction {mnemonic}")
 
