@@ -597,6 +597,10 @@ class BoolExpression(SAST):
 
     def promote_double_not(self) -> BoolExpression:
         if self.op != self.OP_NOT:
+            if isinstance(self.a, BoolExpression):
+                self.inner[0] = self.a.promote_double_not()
+            if len(self.inner) > 1 and isinstance(self.b, BoolExpression):
+                self.inner[1] = self.b.promote_double_not()
             return self
         if not isinstance(self.a, BoolExpression):
             return self
@@ -605,7 +609,7 @@ class BoolExpression(SAST):
 
         ret = self.a.a
         if isinstance(ret, BoolExpression):
-            return ret
+            return ret.promote_double_not()
         return BoolExpression(self.loc, None, ret, self.OP_IMPLICIT_CAST)
 
     __bin_op_mapping = {
