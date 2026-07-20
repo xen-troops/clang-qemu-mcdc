@@ -363,7 +363,18 @@ def handle_expression(ast: ASTEntry) -> SAST:
         return NonBoolExpression(ast.get_loc(), ast.data["name"],
                                  [recurse(ast.inner[0])], ast)
 
+    def parent_has_void_c_cast(ast: ASTEntry):
+        if ast.kind == "CStyleCastExpr" and ast.data.get("castKind") == "ToVoid":
+            return True
+        if ast.parent:
+            return parent_has_void_c_cast(ast.parent)
+        return False
+
     def recurse(ast: ASTEntry):
+        # Filter out expressions which result is not used
+        if parent_has_void_c_cast(ast):
+            raise Nope()
+
         children = ast.inner
         match ast.kind:
             case "ImplicitCastExpr":

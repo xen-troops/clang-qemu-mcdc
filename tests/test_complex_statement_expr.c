@@ -27,11 +27,23 @@ static inline __attribute__((__always_inline__)) int inline_func(int x)
 	x_.val;						\
 	})
 
+#define complex_macro_with_bool_expr(y)			\
+	({						\
+	union { typeof((y)) val; long yy; } x_;		\
+        x_.yy = y;					\
+	x_.val = inline_func(x_.yy);			\
+	(void)(x_.val == y);				\
+	x_.val;						\
+	})
+
 
 int test_func()
 {
+	int z = 0;
+
 	if (complex_macro(4) == 8)
 		return 1;
+	complex_macro_with_bool_expr(z);
 	return 0;
 }
 
