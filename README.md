@@ -171,4 +171,8 @@ report. Use your browser to open `qemu-coverage-report/index.html` or just call 
 # xdg-open qemu-coverage-report/index.html
 ```
 
+The following screenshot shows Xen coverage for a single minimal boot
+(i.e. without running any tests).
 
+![LCOV report for minimal Xen boot](docs/lcov_example.png)
+*Example Xen coverage for a single minimal boot*
