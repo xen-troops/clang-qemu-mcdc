@@ -14,7 +14,7 @@ from elftools.dwarf.dwarf_expr import DWARFExprParser, DWARFExprOp
 from elftools.dwarf.ranges import RangeEntry, BaseAddressEntry
 from mcdc_tool_definitions import (SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar,
                                    FCall, MemberExpr, SizeOf, CCast, IntLiteral, ArraySubscript,
-                                   EnumConst)
+                                   EnumConst, MCDCExprInfo)
 import pickle
 import argparse
 from typing import Optional, Unpack
@@ -364,10 +364,6 @@ def _get_inlines_to_skip(expr: ExprAddressData, inlines: list[DwarfInlinedFunc],
 def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
                s_file_locs: list[SFileLocMap]) -> list[TracePoint]:
     cu_name: str = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
-    if os.path.basename(cu_name) in ("unwind-dw2.c", "unwind-dw2-fde-dip.c", "__aarch64_have_sme.c",
-                                     "unwind-c.c"):
-        # Nothing good in libgcc internals
-        return []
     TRACE_CU(f"Handling compile unit {cu_name}")
     dwarf_locs = parse_locs(cu, s_file_locs)
     ret: list[TracePoint] = []
@@ -408,8 +404,11 @@ def process_cu(cu: CompileUnit, elffile: ELFFile, dis, expressions: list[SAST],
     return ret
 
 
-def process_elf(fname: str, expressions: list[SAST], inline_map: dict[str, list[SFileLocMap]],
-                out_dwarf_pickle: str, out_plugin_conf: str, target_cu: Optional[str] = None):
+def process_elf(fname: str,
+                mcdc_map: dict[str, MCDCExprInfo],
+                out_dwarf_pickle: str,
+                out_plugin_conf: str,
+                target_cu: Optional[str] = None):
     f = open(fname, "rb")
     elffile = ELFFile(f)
     if not elffile.has_dwarf_info():
@@ -422,12 +421,21 @@ def process_elf(fname: str, expressions: list[SAST], inline_map: dict[str, list[
 
     for cu in dwarfinfo.iter_CUs():
         cu_name = cu.get_top_DIE().attributes['DW_AT_name'].value.decode()
+        if os.path.basename(cu_name) in ("unwind-dw2.c", "unwind-dw2-fde-dip.c",
+                                         "__aarch64_have_sme.c", "unwind-c.c", "lse-init.c",
+                                         "lse.S", "__arm_za_disable.S", "__arm_tpidr2_save.S",
+                                         "unordtf2.c", "sfp-exceptions.c", "letf2.c"):
+            # Nothing good in libgcc internals
+            continue
+
+        if cu_name.endswith(".S"):
+            log.warning(f"Skipping assembly file {cu_name}")
+            continue
 
         if target_cu and cu_name != target_cu:
             continue
-        cu_inlines = inline_map.get(cu_name, [])
-
-        ret.extend(process_cu(cu, elffile, dis, expressions, cu_inlines))
+        mcdcinfo = mcdc_map[cu_name]
+        ret.extend(process_cu(cu, elffile, dis, mcdcinfo.expressions, mcdcinfo.inline_info))
 
     print(f"Created {len(ret)} tracepoint objects")
     with open(out_plugin_conf, "wt") as out:
@@ -1512,19 +1520,11 @@ def match_bool_expr(cu: CompileUnit, elf: ELFFile, expr: BoolExpression,
     assert len(ret) == len(expr.get_leafs())
 
 
-#    for expr in expressions:
-#        loc = expr.loc
-#        locations.
-
-
-def load_mcdc_data(expr_file: str) -> tuple[list[SAST], dict[str, list[SFileLocMap]]]:
-    expr: list[BoolExpression] = []
-    inline_loc_map: dict[str, list[SFileLocMap]] = {}
-
+def load_mcdc_data(expr_file: str) -> dict[str, MCDCExprInfo]:
     with open(expr_file, "rb") as f:
-        expr, inline_loc_map = pickle.load(f)
+        mcdc_map = pickle.load(f)
 
-    return expr, inline_loc_map
+    return mcdc_map
 
 FAIL_FAST = False
 
@@ -1542,12 +1542,12 @@ def main():
 
     args = parser.parse_args()
 
-    mcdc_data, iniline_loc = load_mcdc_data(args.input_pickle)
+    mcdc_data = load_mcdc_data(args.input_pickle)
 
     global FAIL_FAST
     FAIL_FAST = args.fail
 
-    process_elf(args.executable, mcdc_data, iniline_loc, args.output_pickle, args.out_plugin_conf,
+    process_elf(args.executable, mcdc_data, args.output_pickle, args.out_plugin_conf,
                 args.compile_unit)
 
 

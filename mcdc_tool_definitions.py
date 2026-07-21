@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Optional
 import itertools
 import uuid
-import sys
+from dataclasses import dataclass
+
+from mcdc_tool_s_loc import SFileLocMap
 
 LAST_CODELOC_FILE: str = None
 
@@ -835,3 +837,9 @@ class MiscExpr(SAST):
 
     def __repr__(self) -> str:
         return f"(MiscExpr:{self.inner})"
+
+@dataclass
+class MCDCExprInfo:
+    compile_unit: str
+    expressions: list[SAST]
+    inline_info: list[SFileLocMap]

@@ -8,9 +8,12 @@ import subprocess
 import pickle
 import multiprocessing
 
-from mcdc_tool_definitions import CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression, NonBoolVar, \
-    FCall, ASTEntry, MemberExpr, SizeOf, CCast, IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure, NullOp, MiscExpr, EnumConst, StatementExpression, CompoundStmt
-from mcdc_tool_s_loc import SFileLocMap, get_s_file_locations
+from mcdc_tool_definitions import (CodeLoc, SAST, BoolExpression, BoolVar, NonBoolExpression,
+                                   NonBoolVar, FCall, ASTEntry, MemberExpr, SizeOf, CCast,
+                                   IntLiteral, StringLiteral, ArraySubscript, FlowControlStructure,
+                                   NullOp, MiscExpr, EnumConst, StatementExpression, CompoundStmt,
+                                   MCDCExprInfo)
+from mcdc_tool_s_loc import  get_s_file_locations
 
 
 def filter_same_expr(expressions: list[SAST]):
@@ -78,16 +81,16 @@ def insane_filter(expressions: list[SAST]):
     expressions = filter_and_report(flowcontrol_predicate, expressions, " - has flowcontrol inside")
     return expressions
 
-def get_bool_expr_list(
+def get_bool_expr_map(
         compile_commands: str
-    ) -> tuple[list[BoolExpression], dict[str, list[SFileLocMap]]]:
+    ) -> dict(str, MCDCExprInfo):
     compilation_db = open(compile_commands, "rt")
     db = json.load(compilation_db)
     seen = []
 
-    bool_expr: list[BoolExpression] = []
-    inline_loc_map: dict[str, list[SFileLocMap]] = {}
     async_results: list[(str, multiprocessing.AsyncResult)] = []
+
+    ret = {}
     with multiprocessing.Pool() as pool:
         for entry in db:
             f: str = entry["file"]
@@ -108,12 +111,11 @@ def get_bool_expr_list(
 
         print("Collecting async results...")
         for ar in async_results:
-            expr, locs = ar[1].get()
-            for e in expr:
+            mcdcinfo: MCDCExprInfo = ar[1].get()
+            for e in mcdcinfo.expressions:
                 assert isinstance(e, BoolExpression)
-            bool_expr.extend(expr)
-            inline_loc_map[ar[0]] = locs
-    return bool_expr, inline_loc_map
+            ret[mcdcinfo.compile_unit] = mcdcinfo
+    return ret
 
 def lift_up_fcalls(expressions: list[SAST]):
     subexpr = []
@@ -140,20 +142,10 @@ def main():
 
     args = parser.parse_args()
 
-    expressions, inline_loc_map = get_bool_expr_list(args.compile_commands)
-
-    lift_up_fcalls(expressions)
-    expressions = filter_const_expr(expressions)
-    expressions = filter_same_expr(expressions)
-    expressions = filter_by_source(expressions)
-    expressions = insane_filter(expressions)
-
-    print(f"Saving {len(expressions)} expressions")
-    for expr in expressions:
-        expr.update_location_range()
+    expr_info = get_bool_expr_map(args.compile_commands)
 
     with open(args.output_pickle, "wb") as f:
-        pickle.dump((expressions, inline_loc_map), f)
+        pickle.dump(expr_info, f)
 
 def get_bool_expr_per_file(fname: str, args: list[str]):
     def object_hook(data: dict):
@@ -222,13 +214,22 @@ def get_inline_loc(fname: str, args: list[str]):
 
 
 def handle_file(
-        fname: str, args: list[str]) -> tuple[list[SAST], list[SFileLocMap]]:
+        fname: str, args: list[str]) -> MCDCExprInfo:
 
     bool_expressions = get_bool_expr_per_file(fname, args)
 
+    lift_up_fcalls(bool_expressions)
+    bool_expressions = filter_const_expr(bool_expressions)
+    bool_expressions = filter_same_expr(bool_expressions)
+    bool_expressions = filter_by_source(bool_expressions)
+    bool_expressions = insane_filter(bool_expressions)
+
+    for expr in bool_expressions:
+        expr.update_location_range()
+
     inline_locs = get_inline_loc(fname, args)
 
-    return bool_expressions, inline_locs
+    return MCDCExprInfo(fname, bool_expressions, inline_locs)
 
 
 def deep_dive(ast: ASTEntry) -> list[SAST]:
