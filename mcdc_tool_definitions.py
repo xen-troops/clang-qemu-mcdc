@@ -17,7 +17,8 @@ class CodeLoc:
             is_macro = "isMacroArgExpansion" in data["expansionLoc"]
             file_exp = data["expansionLoc"].get("file")
             file_spel = data["spellingLoc"].get("file")
-            if is_macro and (file_exp == file_spel or file_spel == None):
+            if is_macro and (file_exp == file_spel
+                             or file_spel == None) and not "line" in data["spellingLoc"]:
                 data = data["spellingLoc"]
                 self.kind = "Spl"
             else:
