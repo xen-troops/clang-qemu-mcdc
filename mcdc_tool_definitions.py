@@ -4,6 +4,8 @@ from typing import Optional
 import itertools
 import uuid
 from dataclasses import dataclass
+from enum import Enum
+from colorama import Fore
 
 from mcdc_tool_s_loc import SFileLocMap
 
@@ -11,26 +13,54 @@ LAST_CODELOC_FILE: str = None
 
 
 class CodeLoc:
+    class Kind(Enum):
+        EXPANSION = "Exp"
+        SPELLING = "Spl"
+        AUTO = "Auto"
+        GENERIC = "Gen"
+        INTERVAL = "Intrv"
 
-    def __init__(self, data: dict):
-        if "expansionLoc" in data:
-            is_macro = "isMacroArgExpansion" in data["expansionLoc"]
-            file_exp = data["expansionLoc"].get("file")
-            file_spel = data["spellingLoc"].get("file")
-            if is_macro and (file_exp == file_spel or file_spel == None):
-                data = data["spellingLoc"]
-                self.kind = "Spl"
-            else:
-                data = data["expansionLoc"]
-                self.kind = "Exp"
+        @classmethod
+        def __get_color_map(cls):
+            color_map = {cls.EXPANSION: Fore.BLUE,
+                         cls.SPELLING: Fore.RED,
+                         cls.GENERIC: Fore.LIGHTGREEN_EX,
+                         cls.AUTO: Fore.YELLOW,
+                         cls.INTERVAL: Fore.CYAN}
+            return color_map
+
+        def __str__(self) -> str:
+            color = self.__get_color_map()[self]
+            return f"{color}({self.value}){Fore.RESET}"
+
+    def __init__(self, *args):
+        if len(args) == 1:
+            self.__init_with_dict(*args)
         else:
-            self.kind = ""
-        self.file = data.get("file")
-        self.col = data.get("col")
-        self.line = data.get("line")
-        self.offset = data.get("offset")
-        self.tokLen = data.get("tokLen")
+            self.__init_with_fields(*args)
+
+    def __init_with_dict(self, data: dict):
+        if "expansionLoc" in data:
+            data = data["expansionLoc"]
+            kind = CodeLoc.Kind.EXPANSION
+        elif "spellingLoc" in data:
+                data = data["spellingLoc"]
+                kind = CodeLoc.Kind.SPELLING
+        else:
+            kind = CodeLoc.Kind.GENERIC
+
+        self.__init_with_fields(data.get("file"), data.get("line"), data.get("col"),
+                                data.get("offset"), data.get("tokLen"), kind)
         self.data = data
+
+    def __init_with_fields(self, fname: str, line: int, col: int, offset: int,
+                           tokLen: int, kind: CodeLoc.Kind):
+        self.file = fname
+        self.col = col
+        self.line = line
+        self.offset = offset
+        self.tokLen = tokLen
+        self.kind = kind
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, CodeLoc):
@@ -38,11 +68,7 @@ class CodeLoc:
         return self.file == other.file and self.col == other.col and self.line == other.line
 
     def __repr__(self) -> str:
-        if self.kind:
-            kind = f"({self.kind})"
-        else:
-            kind = ""
-        return f"<{kind}{self.file}:{self.line}:{self.col}>"
+        return f"<{self.kind}{self.file}:{self.line}:{self.col}>"
 
     def update(self, fname: str, line: str):
         if self.file:
@@ -55,6 +81,23 @@ class CodeLoc:
             if not self.kind:
                 self.kind = "Auto"
 
+    def get_prev_pos(self):
+        line = self.line
+        col = self.col - 1
+        if col <= 0:
+            line -= 1
+            col = 1024
+        if line <=0:
+            # WTF?
+            line = 1
+            col = 1
+
+        return CodeLoc(self.file, line, col, self.offset, self.tokLen, CodeLoc.Kind.INTERVAL)
+
+    def get_next_pos(self):
+        line = self.line
+        col = self.col + 1
+        return CodeLoc(self.file, line, col, self.offset, self.tokLen, CodeLoc.Kind.INTERVAL)
 
 class CodeRange:
 
@@ -97,12 +140,21 @@ class ASTEntry:
                 self.inner[i] = ASTEntry({"kind": "NULL"})
             else:
                 ch.parent = self
+        self.interval_loc = None
 
     def __repr__(self):
-        return self.__format__(0)
+        s = f"AST<{Fore.GREEN}{self.kind}{Fore.RESET}>"
+        if self.loc:
+            s += f"({self.loc})"
+        elif self.range:
+            s += f"({self.range})"
+        return s
 
-    def __format__(self, lvl=0):
-        s = "  " * lvl + f"AST<{self.kind}>"
+    def __str__(self):
+        return self._format_str(0)
+
+    def _format_str(self, lvl=0):
+        s = "  " * lvl + f"AST<{Fore.GREEN}{self.kind}{Fore.RESET}>"
         if self.loc:
             s += f"({self.loc})"
         elif self.range:
@@ -110,8 +162,42 @@ class ASTEntry:
 
         if self.inner:
             for inner in self.inner:
-                s += "\n" + inner.__format__(lvl + 1)
+                s += "\n" + inner._format_str(lvl + 1)
         return s
+
+    def dump_interval_locs(self, lvl=0):
+        s = "  " * lvl + f"AST<{Fore.GREEN}{self.kind}{Fore.RESET}>"
+        s += f"({self.interval_loc})"
+
+        if self.inner:
+            for inner in self.inner:
+                s += "\n" + inner.dump_interval_locs(lvl + 1)
+        return s
+
+    def _prev_sibling(self) -> Optional[ASTEntry]:
+        if not self.parent:
+            return None
+        if not self.parent.inner:
+            print(self)
+            print(self.parent)
+        for i, ch in enumerate(self.parent.inner):
+            if ch == self:
+                if i > 0:
+                    return self.parent.inner[i - 1]
+                else:
+                    return None
+        raise Exception("Can't find myself amongst parent's children?")
+
+    def _next_sibling(self) -> Optional[ASTEntry]:
+        if not self.parent:
+            return None
+        for i, ch in enumerate(self.parent.inner):
+            if ch == self:
+                if len(self.parent.inner) > i + 1:
+                    return self.parent.inner[i + 1]
+                else:
+                    return None
+        raise Exception("Can't find myself amongst parent's children?")
 
     def update_locations(self, fname: str, line: int):
         global LAST_CODELOC_FILE
@@ -133,6 +219,45 @@ class ASTEntry:
 
         for ch in self.inner:
             ch.update_locations(fname, line)
+
+    def calc_interval_locs(self):
+        prev_sibling = self._prev_sibling()
+        start_loc = None
+        if prev_sibling:
+            if prev_sibling.range:
+                start_loc = prev_sibling.range.end.get_next_pos()
+            elif prev_sibling.loc:
+                start_loc = prev_sibling.loc.get_next_pos()
+
+        if not start_loc and self.parent:
+            if self.parent.range:
+                start_loc = self.parent.range.begin
+            else:
+                start_loc = self.parent.loc
+        if not start_loc and self.range:
+            start_loc = self.range.begin
+        if not start_loc:
+            start_loc = self.loc
+
+        next_sibling = self._next_sibling()
+
+        end_loc = None
+        if next_sibling:
+            if next_sibling.range:
+                end_loc = next_sibling.range.begin.get_prev_pos()
+            elif next_sibling.loc:
+                end_loc = next_sibling.loc.get_prev_pos()
+        if not end_loc and self.parent and self.parent.range:
+            end_loc = self.parent.range.end
+        if not end_loc and self.range:
+            end_loc = self.range.end
+        if not end_loc:
+            end_loc = self.loc
+
+        self.interval_loc = CodeRange(None, start_loc, end_loc)
+
+        for ch in self.inner:
+            ch.calc_interval_locs()
 
     def get_loc(self) -> CodeLoc:
         if self.loc:
@@ -177,8 +302,12 @@ class SAST:
 
         self._function_name = self._resolve_function_name(ast)
 
-        if ast and ast.range:
-            self._base_range = ast.range
+        # if ast and ast.range:
+        #     self._base_range = ast.range
+        # else:
+        #     self._base_range = CodeRange({}, self.loc, self.loc)
+        if ast:
+            self._base_range = ast.interval_loc
         else:
             self._base_range = CodeRange({}, self.loc, self.loc)
 
